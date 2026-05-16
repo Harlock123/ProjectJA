@@ -1,0 +1,54 @@
+@inherits LayoutComponentBase
+
+<MudThemeProvider />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1" Color="Color.Default">
+        <MudText Typo="Typo.h6" Style="font-weight:600;">
+            <MudLink Href="/" Color="Color.Inherit" Underline="Underline.None">ProjectJA</MudLink>
+        </MudText>
+
+        <MudSpacer />
+
+        <AuthorizeView>
+            <Authorized>
+                <MudButton Href="/projects" Variant="Variant.Text" Color="Color.Inherit">Projects</MudButton>
+                <MudButton Href="/invites" Variant="Variant.Text" Color="Color.Inherit">Invites</MudButton>
+                <MudButton Href="/audit" Variant="Variant.Text" Color="Color.Inherit">Audit</MudButton>
+                <MudButton Href="/admin/email-outbox" Variant="Variant.Text" Color="Color.Inherit">Outbox</MudButton>
+                <MudButton Href="/admin/oidc-settings" Variant="Variant.Text" Color="Color.Inherit">SSO</MudButton>
+
+                <form method="get" action="/search" style="margin: 0 0.5rem;">
+                    <input type="text" name="q" placeholder="Search issues…"
+                           class="mud-input" style="padding:0.4rem 0.6rem;border:1px solid #ccc;border-radius:4px;background:white;width:18rem;" />
+                </form>
+
+                <MudMenu Icon="@Icons.Material.Filled.AccountCircle" Color="Color.Inherit" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                    <MudMenuItem>
+                        <MudText Typo="Typo.body2">@context.User.Identity?.Name</MudText>
+                    </MudMenuItem>
+                    <MudDivider />
+                    <MudMenuItem Href="/logout">Sign out</MudMenuItem>
+                </MudMenu>
+            </Authorized>
+            <NotAuthorized>
+                <MudButton Href="/login" Variant="Variant.Filled" Color="Color.Primary">Sign in</MudButton>
+            </NotAuthorized>
+        </AuthorizeView>
+    </MudAppBar>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.Large" Class="my-4">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">x</span>
+</div>

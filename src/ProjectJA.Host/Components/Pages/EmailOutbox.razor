@@ -1,0 +1,114 @@
+@page "/admin/email-outbox"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using ProjectJA.Infrastructure.Email
+@inject IEmailOutboxAdmin Outbox
+
+<PageTitle>Email outbox</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Email outbox</MudText>
+
+<MudTabs Elevation="0" Color="@Color.Primary" Class="mb-4" ActivePanelIndexChanged="OnTabChangedAsync">
+    <MudTabPanel Text="@TabLabel(EmailOutboxFilter.DeadLettered, "Dead-lettered")" />
+    <MudTabPanel Text="@TabLabel(EmailOutboxFilter.Pending, "Pending")" />
+    <MudTabPanel Text="@TabLabel(EmailOutboxFilter.Sent, "Sent")" />
+    <MudTabPanel Text="All" />
+</MudTabs>
+
+<MudPaper Elevation="1">
+    @if (_rows is null)
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+    }
+    else if (_rows.Count == 0)
+    {
+        <MudText Color="Color.Default" Class="pa-4">No entries for this filter.</MudText>
+    }
+    else
+    {
+        <MudTable Items="_rows" Hover="true" Dense="true">
+            <HeaderContent>
+                <MudTh>Created</MudTh>
+                <MudTh>To</MudTh>
+                <MudTh>Subject</MudTh>
+                <MudTh Style="width:5rem;">Attempts</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh Style="width:9rem;"></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@context.CreatedAt.ToString("yyyy-MM-dd HH:mm")</MudText></MudTd>
+                <MudTd>@(context.ToAddresses ?? "-")</MudTd>
+                <MudTd>@(context.Subject ?? "(no subject)")</MudTd>
+                <MudTd>@context.Attempts</MudTd>
+                <MudTd>
+                    @if (context.SentAt is not null)
+                    {
+                        <MudChip T="string" Color="Color.Success" Size="Size.Small">sent</MudChip>
+                    }
+                    else if (context.DeadLetterAt is not null)
+                    {
+                        <MudChip T="string" Color="Color.Error" Size="Size.Small">dead-letter</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Default" Size="Size.Small">@($"scheduled {context.ScheduledFor:HH:mm}")</MudChip>
+                    }
+                    @if (!string.IsNullOrEmpty(context.LastError))
+                    {
+                        <MudTooltip Text="@context.LastError">
+                            <MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Small" Color="Color.Warning" Class="ml-1" />
+                        </MudTooltip>
+                    }
+                </MudTd>
+                <MudTd>
+                    @if (context.SentAt is null)
+                    {
+                        <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small"
+                                   OnClick="@(() => RetryAsync(context.Id))">Retry</MudButton>
+                        <MudButton Variant="Variant.Text" Color="Color.Error" Size="Size.Small"
+                                   OnClick="@(() => DiscardAsync(context.Id))">Discard</MudButton>
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudPaper>
+
+@code {
+    private static readonly EmailOutboxFilter[] TabFilters =
+    [
+        EmailOutboxFilter.DeadLettered,
+        EmailOutboxFilter.Pending,
+        EmailOutboxFilter.Sent,
+        EmailOutboxFilter.All,
+    ];
+
+    private EmailOutboxFilter _filter = EmailOutboxFilter.DeadLettered;
+    private List<EmailOutboxEntryView>? _rows;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private static string TabLabel(EmailOutboxFilter filter, string label) => label;
+
+    private async Task OnTabChangedAsync(int index)
+    {
+        _filter = TabFilters[index];
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        var rows = await Outbox.ListAsync(_filter, 200, default);
+        _rows = rows.ToList();
+    }
+
+    private async Task RetryAsync(Guid id)
+    {
+        if (await Outbox.RetryAsync(id, default)) await ReloadAsync();
+    }
+
+    private async Task DiscardAsync(Guid id)
+    {
+        if (await Outbox.DiscardAsync(id, default)) await ReloadAsync();
+    }
+}

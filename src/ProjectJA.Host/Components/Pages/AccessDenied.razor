@@ -1,0 +1,44 @@
+@page "/access-denied"
+
+<PageTitle>Access denied</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Small" Class="mt-8">
+    <MudPaper Class="pa-6" Elevation="2">
+        <MudText Typo="Typo.h5" GutterBottom="true">Access denied</MudText>
+
+        @switch (Reason)
+        {
+            case "no_email":
+                <MudAlert Severity="Severity.Warning">
+                    Your identity provider didn't share an email address. Ask your administrator to enable the <code>email</code> scope.
+                </MudAlert>
+                break;
+            case "unknown_user":
+                <MudAlert Severity="Severity.Warning">
+                    No account is provisioned for that email in this organization. Ask your administrator to invite you.
+                </MudAlert>
+                break;
+            case "no_org":
+                <MudAlert Severity="Severity.Error">
+                    No organization exists in this tenant. Contact your administrator.
+                </MudAlert>
+                break;
+            case "provision_failed":
+                <MudAlert Severity="Severity.Error">
+                    Auto-provisioning failed. Contact your administrator.
+                </MudAlert>
+                break;
+            default:
+                <MudAlert Severity="Severity.Warning">
+                    You don't have access to that resource.
+                </MudAlert>
+                break;
+        }
+
+        <MudButton Href="/login" Variant="Variant.Text" Color="Color.Primary" Class="mt-4">Back to sign in</MudButton>
+    </MudPaper>
+</MudContainer>
+
+@code {
+    [SupplyParameterFromQuery] public string? Reason { get; set; }
+}

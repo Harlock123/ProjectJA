@@ -1,0 +1,150 @@
+@page "/projects/{projectId:guid}"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@inject AppDbContext Db
+@inject IClock Clock
+@inject NavigationManager Nav
+
+<PageTitle>@(_project?.Name ?? "Project")</PageTitle>
+
+@if (_project is null)
+{
+    <MudText>Loading…</MudText>
+}
+else
+{
+    <MudButton Href="/projects" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" Class="mb-2">All projects</MudButton>
+
+    <MudStack Row="true" AlignItems="AlignItems.Baseline" Class="mb-4">
+        <MudText Typo="Typo.h4"><span style="font-family:monospace;">@_project.Key</span> — @_project.Name</MudText>
+        <MudSpacer />
+        <MudButton Href="@($"/projects/{ProjectId}/board")" Variant="Variant.Outlined" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.ViewKanban">Board</MudButton>
+    </MudStack>
+
+    @if (!string.IsNullOrWhiteSpace(_project.Description))
+    {
+        <MudPaper Class="pa-3 mb-4" Elevation="0" Style="background:#f7f7f7;">
+            <MudText Typo="Typo.body2">@_project.Description</MudText>
+        </MudPaper>
+    }
+
+    <MudGrid>
+        <MudItem xs="12" md="8">
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudText Typo="Typo.h6" GutterBottom="true">Issues</MudText>
+                @if (_issues is null || _issues.Count == 0)
+                {
+                    <MudText Color="Color.Default">No issues yet.</MudText>
+                }
+                else
+                {
+                    <MudTable Items="_issues" Hover="true" Dense="true">
+                        <HeaderContent>
+                            <MudTh>Key</MudTh>
+                            <MudTh>Title</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Updated</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd><MudLink Href="@($"/issues/{context.Id}")" Style="font-family:monospace;">@_project.Key-@context.Number</MudLink></MudTd>
+                            <MudTd>@context.Title</MudTd>
+                            <MudTd>
+                                <MudSelect T="IssueStatus" Value="context.Status" ValueChanged="@(v => TransitionAsync(context, v))" Dense="true" Margin="Margin.Dense">
+                                    <MudSelectItem Value="IssueStatus.Todo">Todo</MudSelectItem>
+                                    <MudSelectItem Value="IssueStatus.Doing">Doing</MudSelectItem>
+                                    <MudSelectItem Value="IssueStatus.Done">Done</MudSelectItem>
+                                </MudSelect>
+                            </MudTd>
+                            <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@context.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</MudText></MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="4">
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudText Typo="Typo.h6" GutterBottom="true">Create an issue</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
+                    Issues are work items in this project. The next one will be
+                    <strong>@_project.Key-@(_project.NextIssueNumber)</strong> and starts in
+                    <em>Todo</em>; drag it on the board to change status.
+                </MudText>
+                <MudStack Spacing="3">
+                    <MudTextField Label="Title"
+                                  Placeholder="One-line summary of the work"
+                                  HelperText="Required. Keep it short — details go in the description."
+                                  @bind-Value="_draft.Title"
+                                  Variant="Variant.Outlined" Required="true" MaxLength="300" />
+                    <MudTextField Label="Description (optional)"
+                                  Placeholder="Context, acceptance criteria, links…"
+                                  @bind-Value="_draft.Description"
+                                  Variant="Variant.Outlined" Lines="4" />
+                    <MudButton OnClick="CreateAsync" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
+                               StartIcon="@Icons.Material.Filled.Add">Create issue</MudButton>
+                    @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private Project? _project;
+    private List<Issue>? _issues;
+    private Draft _draft = new();
+    private string? _error;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        // AsNoTracking + ChangeTracker.Clear: the same scoped AppDbContext lives for
+        // the whole Blazor circuit, so without this we'd risk getting cached/tracked
+        // copies instead of fresh rows after each create/edit.
+        Db.ChangeTracker.Clear();
+        _project = await Db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == ProjectId);
+        if (_project is null) return;
+        _issues = await Db.Issues.AsNoTracking()
+            .Where(i => i.ProjectId == ProjectId)
+            .OrderBy(i => i.Number)
+            .ToListAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        if (_project is null) return;
+        if (string.IsNullOrWhiteSpace(_draft.Title))
+        {
+            _error = "Title is required.";
+            return;
+        }
+
+        var createdBy = await Db.Users.Select(u => u.Id).FirstOrDefaultAsync();
+        var tracked = await Db.Projects.FirstAsync(p => p.Id == ProjectId);
+        var number = tracked.AllocateIssueNumber();
+        var issue = Issue.Create(tracked.Id, number, _draft.Title, _draft.Description, createdBy, Clock.UtcNow);
+        Db.Issues.Add(issue);
+        await Db.SaveChangesAsync();
+        _draft = new();
+        await ReloadAsync();
+    }
+
+    private async Task TransitionAsync(Issue issue, IssueStatus newStatus)
+    {
+        var tracked = await Db.Issues.FirstAsync(i => i.Id == issue.Id);
+        tracked.Transition(newStatus, Clock.UtcNow);
+        await Db.SaveChangesAsync();
+        await ReloadAsync();
+    }
+
+    private sealed class Draft
+    {
+        public string Title { get; set; } = "";
+        public string? Description { get; set; }
+    }
+}

@@ -1,0 +1,36 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProjectJA.SharedKernel\ProjectJA.SharedKernel.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Identity\ProjectJA.Modules.Identity.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Projects\ProjectJA.Modules.Projects.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Issues\ProjectJA.Modules.Issues.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Workflows\ProjectJA.Modules.Workflows.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Boards\ProjectJA.Modules.Boards.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Search\ProjectJA.Modules.Search.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Notifications\ProjectJA.Modules.Notifications.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Audit\ProjectJA.Modules.Audit.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.S3" Version="4.0.7" />
+    <PackageReference Include="Coravel" Version="6.0.2" />
+    <PackageReference Include="MailKit" Version="4.16.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="9.0.4" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.4">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
+  </ItemGroup>
+</Project>

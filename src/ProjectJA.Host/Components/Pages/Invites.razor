@@ -1,0 +1,119 @@
+@page "/invites"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using ProjectJA.Modules.Identity.Contracts
+@inject IInviteService InviteService
+@inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
+
+<PageTitle>Invites</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Invites</MudText>
+
+<MudGrid>
+    <MudItem xs="12" md="5">
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudText Typo="Typo.h6" GutterBottom="true">Send a new invite</MudText>
+            <MudStack Spacing="3">
+                <MudTextField Label="Email" @bind-Value="_draft.Email" InputType="InputType.Email" Variant="Variant.Outlined" />
+                <MudButton OnClick="CreateAsync" Variant="Variant.Filled" Color="Color.Primary">Send invite</MudButton>
+                @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
+            </MudStack>
+
+            @if (_lastInvite is not null)
+            {
+                <MudAlert Severity="Severity.Info" Class="mt-4">
+                    <MudText Typo="Typo.body2"><strong>Invite sent to @_lastInvite.Email.</strong></MudText>
+                    <MudText Typo="Typo.body2" Class="mt-1">Email delivery is currently stubbed (logs only). Share this link manually:</MudText>
+                    <MudText Typo="Typo.caption" Style="word-break:break-all;font-family:monospace;display:block;margin-top:0.5rem;">@_lastInvite.AcceptUrl</MudText>
+                </MudAlert>
+            }
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" md="7">
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudText Typo="Typo.h6" GutterBottom="true">Pending invites</MudText>
+            @if (_pending is null)
+            {
+                <MudText>Loading…</MudText>
+            }
+            else if (_pending.Count == 0)
+            {
+                <MudText Color="Color.Default">No pending invites.</MudText>
+            }
+            else
+            {
+                <MudTable Items="_pending" Hover="true" Dense="true">
+                    <HeaderContent>
+                        <MudTh>Email</MudTh>
+                        <MudTh>Sent</MudTh>
+                        <MudTh>Expires</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.Email</MudTd>
+                        <MudTd>@context.CreatedAt.ToString("yyyy-MM-dd HH:mm")</MudTd>
+                        <MudTd>
+                            @context.ExpiresAt.ToString("yyyy-MM-dd HH:mm")
+                            @if (context.IsExpired) { <MudChip T="string" Color="Color.Error" Size="Size.Small" Class="ml-2">expired</MudChip> }
+                        </MudTd>
+                        <MudTd>
+                            <MudButton Variant="Variant.Text" Color="Color.Error" Size="Size.Small" OnClick="@(() => RevokeAsync(context.Id))">Revoke</MudButton>
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private Draft _draft = new();
+    private string? _error;
+    private CreatedInvite? _lastInvite;
+    private List<InviteSummary>? _pending;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        var pending = await InviteService.ListPendingAsync(default);
+        _pending = pending.ToList();
+    }
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_draft.Email))
+        {
+            _error = "Email is required.";
+            return;
+        }
+
+        var authState = await Auth.GetAuthenticationStateAsync();
+        var userIdClaim = authState.User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(userIdClaim, out var userId))
+        {
+            _error = "Not signed in.";
+            return;
+        }
+
+        var baseUrl = new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority);
+        _lastInvite = await InviteService.CreateAsync(_draft.Email, userId, baseUrl, default);
+        _draft = new();
+        await ReloadAsync();
+    }
+
+    private async Task RevokeAsync(Guid id)
+    {
+        await InviteService.RevokeAsync(id, default);
+        await ReloadAsync();
+    }
+
+    private sealed class Draft
+    {
+        public string Email { get; set; } = "";
+    }
+}

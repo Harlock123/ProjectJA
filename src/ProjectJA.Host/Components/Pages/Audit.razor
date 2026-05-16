@@ -1,0 +1,66 @@
+@page "/audit"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using ProjectJA.Modules.Audit.Contracts
+@using ProjectJA.Modules.Identity.Contracts
+@inject IAuditQueries AuditQueries
+@inject IUserQueries UserQueries
+
+<PageTitle>Audit log</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Audit log</MudText>
+
+<MudPaper Elevation="1">
+    @if (_events is null)
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+    }
+    else if (_events.Count == 0)
+    {
+        <MudText Color="Color.Default" Class="pa-4">No events recorded.</MudText>
+    }
+    else
+    {
+        <MudText Color="Color.Default" Class="pa-3" Typo="Typo.body2">Showing the most recent @_events.Count event(s).</MudText>
+        <MudTable Items="_events" Hover="true" Dense="true">
+            <HeaderContent>
+                <MudTh>When</MudTh>
+                <MudTh>Actor</MudTh>
+                <MudTh>Action</MudTh>
+                <MudTh>Resource</MudTh>
+                <MudTh>Summary</MudTh>
+                <MudTh>IP</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd><MudText Typo="Typo.body2" Style="white-space:nowrap;">@context.OccurredAt.ToString("yyyy-MM-dd HH:mm:ss")</MudText></MudTd>
+                <MudTd>@ActorName(context.ActorId)</MudTd>
+                <MudTd><MudText Typo="Typo.body2" Style="font-family:monospace;">@context.Action</MudText></MudTd>
+                <MudTd><MudText Typo="Typo.caption" Style="font-family:monospace;">@context.ResourceType:@context.ResourceId</MudText></MudTd>
+                <MudTd>@context.Summary</MudTd>
+                <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@context.IpAddress</MudText></MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudPaper>
+
+@code {
+    private List<AuditEntryView>? _events;
+    private Dictionary<Guid, UserSummary> _actors = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var events = await AuditQueries.ListRecentAsync(100, default);
+        _events = events.ToList();
+        var actorIds = _events.Where(e => e.ActorId.HasValue).Select(e => e.ActorId!.Value);
+        _actors = (await UserQueries.GetSummariesAsync(actorIds, default))
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+    }
+
+    private string ActorName(Guid? actorId)
+    {
+        if (actorId is null) return "(system)";
+        return _actors.TryGetValue(actorId.Value, out var user)
+            ? user.DisplayName
+            : actorId.Value.ToString("N")[..8];
+    }
+}

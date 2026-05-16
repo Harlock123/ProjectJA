@@ -1,0 +1,112 @@
+@page "/login"
+@using Microsoft.AspNetCore.Authentication
+@using Microsoft.AspNetCore.Identity
+@using ProjectJA.Host.Authentication
+@using ProjectJA.Modules.Identity.Contracts
+@using ProjectJA.Modules.Identity.Domain
+@inject SignInManager<ApplicationUser> SignIn
+@inject NavigationManager Nav
+@inject OidcAuthenticationOptions OidcGlobal
+@inject IOidcConfigService OidcConfig
+
+<PageTitle>Sign in</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Small" Class="mt-8">
+    <MudPaper Class="pa-6" Elevation="2">
+        <MudText Typo="Typo.h5" GutterBottom="true">Sign in</MudText>
+
+        <EditForm Model="Input" method="post" OnValidSubmit="LoginAsync" FormName="login">
+            <MudStack Spacing="3">
+                <div>
+                    <label for="login-email" class="mud-typography mud-typography-body2">Email</label>
+                    <InputText id="login-email" @bind-Value="Input.Email" type="email" autocomplete="username" class="ssr-input" />
+                </div>
+                <div>
+                    <label for="login-password" class="mud-typography mud-typography-body2">Password</label>
+                    <InputText id="login-password" @bind-Value="Input.Password" type="password" autocomplete="current-password" class="ssr-input" />
+                </div>
+                <label class="mud-typography mud-typography-body2" style="display:flex;align-items:center;gap:0.5rem;">
+                    <InputCheckbox @bind-Value="Input.RememberMe" /> Remember me
+                </label>
+                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true">
+                    Sign in
+                </MudButton>
+                @if (_error is not null)
+                {
+                    <MudAlert Severity="Severity.Error">@_error</MudAlert>
+                }
+                <MudText Typo="Typo.body2" Align="Align.Center">
+                    <MudLink Href="/forgot-password">Forgot your password?</MudLink>
+                </MudText>
+            </MudStack>
+        </EditForm>
+
+        @if (_oidcLabel is not null)
+        {
+            <MudDivider Class="my-4" />
+            <form method="post" action="/signin-external">
+                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Outlined" Color="Color.Primary"
+                           FullWidth="true" StartIcon="@Icons.Material.Filled.Login">
+                    @_oidcLabel
+                </MudButton>
+            </form>
+        }
+    </MudPaper>
+</MudContainer>
+
+<style>
+    .ssr-input {
+        width: 100%;
+        padding: 0.6rem 0.75rem;
+        border: 1px solid rgba(0,0,0,0.23);
+        border-radius: 4px;
+        font: inherit;
+        box-sizing: border-box;
+        background: white;
+    }
+    .ssr-input:focus { outline: 2px solid #594ae2; outline-offset: -1px; }
+</style>
+
+@code {
+    [SupplyParameterFromForm] public InputModel Input { get; set; } = new();
+    [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+
+    private string? _error;
+    private string? _oidcLabel;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var tenantCfg = await OidcConfig.GetAsync(default);
+        if (tenantCfg is { Enabled: true } && !string.IsNullOrWhiteSpace(tenantCfg.Authority))
+        {
+            _oidcLabel = tenantCfg.DisplayName;
+        }
+        else if (OidcGlobal.Enabled && !string.IsNullOrWhiteSpace(OidcGlobal.Authority))
+        {
+            _oidcLabel = OidcGlobal.DisplayName;
+        }
+    }
+
+    private async Task LoginAsync()
+    {
+        var result = await SignIn.PasswordSignInAsync(
+            Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: false);
+
+        if (result.Succeeded)
+        {
+            Nav.NavigateTo(string.IsNullOrEmpty(ReturnUrl) ? "/projects" : ReturnUrl);
+            return;
+        }
+
+        _error = result.IsLockedOut ? "Account locked." :
+                 result.IsNotAllowed ? "Sign-in not allowed." :
+                 "Invalid email or password.";
+    }
+
+    public sealed class InputModel
+    {
+        public string Email { get; set; } = "";
+        public string Password { get; set; } = "";
+        public bool RememberMe { get; set; }
+    }
+}

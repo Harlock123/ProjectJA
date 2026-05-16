@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProjectJA.SharedKernel\ProjectJA.SharedKernel.csproj" />
+    <ProjectReference Include="..\ProjectJA.Infrastructure\ProjectJA.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Identity\ProjectJA.Modules.Identity.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Projects\ProjectJA.Modules.Projects.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Issues\ProjectJA.Modules.Issues.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Workflows\ProjectJA.Modules.Workflows.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Boards\ProjectJA.Modules.Boards.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Search\ProjectJA.Modules.Search.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Notifications\ProjectJA.Modules.Notifications.csproj" />
+    <ProjectReference Include="..\Modules\ProjectJA.Modules.Audit\ProjectJA.Modules.Audit.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="9.0.4" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.4" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.StackExchangeRedis" Version="9.0.4" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.4">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="MudBlazor" Version="9.4.0" />
+    <PackageReference Include="Npgsql.OpenTelemetry" Version="9.0.4" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Process" Version="1.15.1-beta.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
+    <PackageReference Include="Scalar.AspNetCore" Version="2.0.21" />
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.1" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

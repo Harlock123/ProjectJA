@@ -1,0 +1,113 @@
+@page "/projects"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@inject AppDbContext Db
+@inject IClock Clock
+@inject NavigationManager Nav
+
+<PageTitle>Projects</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Projects</MudText>
+
+<MudGrid>
+    <MudItem xs="12" md="8">
+        <MudPaper Class="pa-4" Elevation="1">
+            @if (_projects is null)
+            {
+                <MudText>Loading…</MudText>
+            }
+            else if (_projects.Count == 0)
+            {
+                <MudText Color="Color.Default">No projects yet — create one on the right.</MudText>
+            }
+            else
+            {
+                <MudTable Items="_projects" Hover="true" Dense="true">
+                    <HeaderContent>
+                        <MudTh>Key</MudTh>
+                        <MudTh>Name</MudTh>
+                        <MudTh>Created</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd><MudText Typo="Typo.body2" Style="font-family:monospace;">@context.Key</MudText></MudTd>
+                        <MudTd>@context.Name</MudTd>
+                        <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@context.CreatedAt.ToString("yyyy-MM-dd")</MudText></MudTd>
+                        <MudTd>
+                            <MudButton Href="@($"/projects/{context.Id}")" Variant="Variant.Text" Color="Color.Primary" Size="Size.Small">Open</MudButton>
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" md="4">
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudText Typo="Typo.h6" GutterBottom="true">Create a project</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
+                A project is a workspace for issues. Each issue gets numbered with the
+                project's key (e.g. <code>WEB-12</code>).
+            </MudText>
+            <MudStack Spacing="3">
+                <MudTextField Label="Key"
+                              Placeholder="WEB"
+                              HelperText="Short uppercase code shown on every issue. 2-8 letters, like WEB or BACKEND."
+                              @bind-Value="_draft.Key"
+                              Variant="Variant.Outlined" Required="true" Counter="8" MaxLength="16" />
+                <MudTextField Label="Name"
+                              Placeholder="Marketing website"
+                              HelperText="Human-readable name shown in the projects list."
+                              @bind-Value="_draft.Name"
+                              Variant="Variant.Outlined" Required="true" />
+                <MudTextField Label="Description (optional)"
+                              Placeholder="What lives in this project?"
+                              @bind-Value="_draft.Description"
+                              Variant="Variant.Outlined" Lines="3" />
+                <MudButton OnClick="CreateAsync" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
+                           StartIcon="@Icons.Material.Filled.Add">Create project</MudButton>
+                @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
+            </MudStack>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private List<Project>? _projects;
+    private Draft _draft = new();
+    private string? _error;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        Db.ChangeTracker.Clear();
+        _projects = await Db.Projects.AsNoTracking().OrderBy(p => p.Key).ToListAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_draft.Key) || string.IsNullOrWhiteSpace(_draft.Name))
+        {
+            _error = "Key and Name are required.";
+            return;
+        }
+
+        var org = await Db.Organizations.FirstOrDefaultAsync();
+        if (org is null) { _error = "No organization. Restart the app to seed one."; return; }
+
+        var p = Project.Create(org.Id, _draft.Key, _draft.Name, _draft.Description, Clock.UtcNow);
+        Db.Projects.Add(p);
+        await Db.SaveChangesAsync();
+        _draft = new();
+        await ReloadAsync();
+    }
+
+    private sealed class Draft
+    {
+        public string Key { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+    }
+}

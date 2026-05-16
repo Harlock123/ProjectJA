@@ -1,0 +1,146 @@
+@page "/projects/{projectId:guid}/board"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using ProjectJA.Host.Hubs
+@using ProjectJA.SharedKernel.Tenancy
+@inject AppDbContext Db
+@inject IClock Clock
+@inject ITenantContext Tenant
+@inject BoardEventStream EventStream
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>@(_project is null ? "Board" : $"{_project.Key} board")</PageTitle>
+
+@if (_project is null)
+{
+    <MudText>Loading…</MudText>
+}
+else
+{
+    <MudButton Href="@($"/projects/{ProjectId}")" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" Class="mb-2">Back to project</MudButton>
+
+    <MudText Typo="Typo.h4" GutterBottom="true">
+        <span style="font-family:monospace;">@_project.Key</span> — @_project.Name
+        <span style="font-size:1rem;color:#888;margin-left:0.5rem;">board</span>
+    </MudText>
+
+    <MudGrid Spacing="2">
+        @foreach (var col in Columns)
+        {
+            <MudItem xs="12" sm="4">
+                <div class="board-column"
+                     data-status="@((int)col)"
+                     style="@($"min-height:24rem;background:{ColumnBackground(col)};border:1px solid #e0e0e0;border-radius:6px;padding:0.5rem;")">
+                    <MudText Typo="Typo.subtitle1" Style="font-weight:600;" Class="px-1 pb-2">@col</MudText>
+
+                    @foreach (var issue in IssuesIn(col))
+                    {
+                        <div draggable="true"
+                             data-issue-id="@issue.Id"
+                             @key="issue.Id"
+                             class="board-card"
+                             style="cursor:grab;background:white;border:1px solid #ddd;border-radius:4px;padding:0.5rem 0.75rem;margin-bottom:0.5rem;">
+                            <div style="font-family:monospace;font-size:0.75rem;color:#888;">@_project.Key-@issue.Number</div>
+                            <div style="font-size:0.9rem;">@issue.Title</div>
+                        </div>
+                    }
+                </div>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+<style>
+    .board-card-dragging { opacity: 0.5; }
+    .board-column-hover { box-shadow: inset 0 0 0 2px #594ae2; }
+</style>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    private static readonly IssueStatus[] Columns = [IssueStatus.Todo, IssueStatus.Doing, IssueStatus.Done];
+
+    private Project? _project;
+    private List<Issue> _issues = new();
+    private IDisposable? _subscription;
+    private DotNetObjectReference<Board>? _selfRef;
+    private string? _groupName;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+        _groupName = $"tenant:{Tenant.Current.Value:N}:project:{ProjectId:N}";
+        _subscription = EventStream.Subscribe(_groupName, HandleEventAsync);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_project is null) return;
+        // Re-init on every render so freshly rendered cards/columns (after drops, reloads,
+        // or remote IssueMoved events) get their drag-drop listeners. The JS guards
+        // against double-binding via data-dnd-bound.
+        _selfRef ??= DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("projectja.board.init", _selfRef);
+    }
+
+    private async Task ReloadAsync()
+    {
+        Db.ChangeTracker.Clear();
+        _project = await Db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == ProjectId);
+        if (_project is null) return;
+        _issues = await Db.Issues.AsNoTracking()
+            .Where(i => i.ProjectId == ProjectId)
+            .OrderBy(i => i.Number)
+            .ToListAsync();
+    }
+
+    private IEnumerable<Issue> IssuesIn(IssueStatus column) =>
+        _issues.Where(i => i.Status == column);
+
+    private static string ColumnBackground(IssueStatus col) => col switch
+    {
+        IssueStatus.Todo => "#fafafa",
+        IssueStatus.Doing => "#fff8e1",
+        IssueStatus.Done => "#e8f5e9",
+        _ => "#fafafa",
+    };
+
+    [JSInvokable]
+    public async Task OnCardDropped(string issueId, int statusInt)
+    {
+        if (!Guid.TryParse(issueId, out var id)) return;
+        if (!Enum.IsDefined(typeof(IssueStatus), statusInt)) return;
+        var target = (IssueStatus)statusInt;
+
+        var issue = await Db.Issues.FirstOrDefaultAsync(i => i.Id == id);
+        if (issue is null || issue.Status == target) return;
+
+        issue.Transition(target, Clock.UtcNow);
+        await Db.SaveChangesAsync();
+
+        if (_groupName is not null)
+        {
+            await EventStream.PublishAsync(
+                _groupName,
+                "IssueMoved",
+                new { issueId = issue.Id, projectId = issue.ProjectId, status = (int)issue.Status });
+        }
+
+        await ReloadAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleEventAsync(string eventName, object payload)
+    {
+        if (eventName != "IssueMoved") return;
+        await ReloadAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _subscription?.Dispose();
+        _selfRef?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

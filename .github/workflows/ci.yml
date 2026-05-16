@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Restore
+        run: dotnet restore ProjectJA.sln
+
+      - name: Build
+        run: dotnet build ProjectJA.sln --configuration Release --no-restore
+
+      - name: Unit tests
+        run: dotnet test tests/ProjectJA.UnitTests --configuration Release --no-build --logger "trx;LogFileName=unit.trx"
+
+      - name: Architecture tests
+        run: dotnet test tests/ProjectJA.ArchitectureTests --configuration Release --no-build --logger "trx;LogFileName=arch.trx"
+
+      # Integration tests need a Docker daemon. GitHub-hosted ubuntu runners have one,
+      # but the tests are slower so we keep them gated on a manual workflow_dispatch.
+      - name: Integration tests
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: dotnet test tests/ProjectJA.IntegrationTests --configuration Release --no-build --logger "trx;LogFileName=integration.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/TestResults/*.trx'
+          retention-days: 14

@@ -1,0 +1,95 @@
+@page "/accept-invite"
+@using Microsoft.AspNetCore.Identity
+@using ProjectJA.Modules.Identity.Contracts
+@using ProjectJA.Modules.Identity.Domain
+@inject IInviteService InviteService
+@inject SignInManager<ApplicationUser> SignIn
+@inject UserManager<ApplicationUser> Users
+@inject NavigationManager Nav
+
+<PageTitle>Accept invite</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Small" Class="mt-8">
+    <MudPaper Class="pa-6" Elevation="2">
+        <MudText Typo="Typo.h5" GutterBottom="true">Accept your invite</MudText>
+
+        @if (string.IsNullOrWhiteSpace(Token))
+        {
+            <MudAlert Severity="Severity.Error">This URL is missing the invite token.</MudAlert>
+        }
+        else if (_completed)
+        {
+            <MudAlert Severity="Severity.Success">Welcome aboard, @Input.FirstName. Redirecting…</MudAlert>
+        }
+        else
+        {
+            <EditForm Model="@Input" method="post" OnValidSubmit="AcceptAsync" FormName="accept-invite">
+                <input type="hidden" name="Token" value="@Token" />
+                <MudStack Spacing="3">
+                    <div>
+                        <label for="ai-first" class="mud-typography mud-typography-body2">First name</label>
+                        <InputText id="ai-first" @bind-Value="Input.FirstName" autocomplete="given-name" class="ssr-input" />
+                    </div>
+                    <div>
+                        <label for="ai-last" class="mud-typography mud-typography-body2">Last name</label>
+                        <InputText id="ai-last" @bind-Value="Input.LastName" autocomplete="family-name" class="ssr-input" />
+                    </div>
+                    <div>
+                        <label for="ai-pwd" class="mud-typography mud-typography-body2">Password</label>
+                        <InputText id="ai-pwd" @bind-Value="Input.Password" type="password" autocomplete="new-password" class="ssr-input" />
+                    </div>
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true">
+                        Create account
+                    </MudButton>
+                    @if (_error is not null)
+                    {
+                        <MudAlert Severity="Severity.Error">@_error</MudAlert>
+                    }
+                </MudStack>
+            </EditForm>
+            <style>
+                .ssr-input {
+                    width: 100%; padding: 0.6rem 0.75rem; border: 1px solid rgba(0,0,0,0.23);
+                    border-radius: 4px; font: inherit; box-sizing: border-box; background: white;
+                }
+            </style>
+        }
+    </MudPaper>
+</MudContainer>
+
+@code {
+    [SupplyParameterFromQuery] public string? Token { get; set; }
+    [SupplyParameterFromForm] public InputModel Input { get; set; } = new();
+
+    private string? _error;
+    private bool _completed;
+
+    private async Task AcceptAsync()
+    {
+        _error = null;
+
+        var result = await InviteService.AcceptAsync(
+            new AcceptInviteRequest(Token ?? "", Input.Password, Input.FirstName, Input.LastName),
+            default);
+
+        if (!result.Success)
+        {
+            _error = result.Error ?? "Unable to accept invite.";
+            return;
+        }
+
+        var user = await Users.FindByEmailAsync(result.Email!);
+        if (user is not null)
+            await SignIn.SignInAsync(user, isPersistent: false);
+
+        _completed = true;
+        Nav.NavigateTo("/projects", forceLoad: true);
+    }
+
+    public sealed class InputModel
+    {
+        public string FirstName { get; set; } = "";
+        public string LastName { get; set; } = "";
+        public string Password { get; set; } = "";
+    }
+}

@@ -1,0 +1,28 @@
+@page "/logout"
+@using Microsoft.AspNetCore.Identity
+@using ProjectJA.Modules.Identity.Domain
+@inject SignInManager<ApplicationUser> SignIn
+@inject NavigationManager Nav
+
+<PageTitle>Sign out</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Small" Class="mt-8">
+    <MudPaper Class="pa-6" Elevation="2">
+        <MudText Typo="Typo.h5" GutterBottom="true">Sign out</MudText>
+
+        <EditForm Model="@(new object())" method="post" OnValidSubmit="DoLogoutAsync" FormName="logout">
+            <MudText Typo="Typo.body1" Class="mb-4">Click below to sign out.</MudText>
+            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary">
+                Sign out
+            </MudButton>
+        </EditForm>
+    </MudPaper>
+</MudContainer>
+
+@code {
+    private async Task DoLogoutAsync()
+    {
+        await SignIn.SignOutAsync();
+        Nav.NavigateTo("/login");
+    }
+}

@@ -1,0 +1,69 @@
+# SaaS-mode compose. App + Postgres + PgBouncer + Caddy.
+# Object storage uses Cloudflare R2 (configured via env vars), not bundled.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: tenant_directory
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  pgbouncer:
+    image: bitnami/pgbouncer:1
+    restart: unless-stopped
+    environment:
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD}
+      PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_DATABASE: "*"
+      PGBOUNCER_AUTH_TYPE: scram-sha-256
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    # Use the pre-built image from GHCR; the `deploy.sh` script sets PROJECTJA_TAG
+    # via `export` before running `docker compose up`. Falls back to :latest.
+    image: ghcr.io/${GITHUB_OWNER:-yourorg}/projectja:${PROJECTJA_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__TenantDirectory: "Host=postgres;Database=tenant_directory;Username=postgres;Password=${POSTGRES_PASSWORD}"
+      Tenancy__Mode: SaaS
+      Tenancy__PgBouncerHost: pgbouncer
+      Storage__Endpoint: ${R2_ENDPOINT:?required}
+      Storage__Bucket: ${R2_BUCKET:?required}
+      Storage__AccessKey: ${R2_ACCESS_KEY:?required}
+      Storage__SecretKey: ${R2_SECRET_KEY:?required}
+      Email__Driver: postmark
+      Email__Postmark__ServerToken: ${POSTMARK_SERVER_TOKEN:?required}
+      Email__From: ${EMAIL_FROM:?required}
+    depends_on:
+      pgbouncer:
+        condition: service_started
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  caddydata:
+  caddyconfig:

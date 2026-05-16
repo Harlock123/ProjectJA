@@ -1,0 +1,21 @@
+ProjectJA is licensed under the Business Source License 1.1.
+
+Licensor:             ProjectJA Authors
+Licensed Work:        ProjectJA (this repository, all releases)
+Change Date:          three years after the date of each release
+Change License:       Apache License, Version 2.0
+
+Additional Use Grant:
+    You may make production use of the Licensed Work, provided that
+    your use does not include offering the Licensed Work to third
+    parties on a hosted or embedded basis.
+
+The full text of the Business Source License 1.1 template should be
+appended here verbatim from the canonical source:
+    https://mariadb.com/bsl11/
+
+Until the Change Date of a given release, any use outside the
+Additional Use Grant requires a commercial license from the Licensor.
+After the Change Date, that release is governed by the Change License.
+
+SPDX-License-Identifier: BUSL-1.1

@@ -1,0 +1,122 @@
+@page "/admin/oidc-settings"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using ProjectJA.Modules.Identity.Contracts
+@inject IOidcConfigService OidcConfig
+
+<PageTitle>OIDC settings</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">OIDC settings</MudText>
+<MudAlert Severity="Severity.Info" Class="mb-4">
+    Changes to OIDC config require an app restart before they take effect for sign-in.
+    The current values are loaded from this tenant's database.
+</MudAlert>
+
+<MudPaper Class="pa-6" Elevation="1">
+    @if (_loaded)
+    {
+        <MudStack Spacing="3">
+            <MudSwitch @bind-Value="Input.Enabled" Label="Enable OIDC sign-in" Color="Color.Primary" />
+            <MudTextField Label="Display name" @bind-Value="Input.DisplayName" Variant="Variant.Outlined" />
+            <MudTextField Label="Authority" @bind-Value="Input.Authority" Variant="Variant.Outlined"
+                          HelperText="OIDC discovery URL (e.g. https://accounts.google.com)" />
+            <MudTextField Label="Client ID" @bind-Value="Input.ClientId" Variant="Variant.Outlined" />
+            <MudTextField Label="Client secret" @bind-Value="Input.ClientSecret" InputType="InputType.Password"
+                          Variant="Variant.Outlined"
+                          HelperText="@(_hasExistingSecret ? "Leave blank to keep the existing secret." : "")" />
+            <MudSwitch @bind-Value="Input.AutoProvision" Label="Auto-provision new users" Color="Color.Primary" />
+            <MudTextField Label="Auto-provision email domains (comma-separated)"
+                          @bind-Value="Input.AutoProvisionDomainsCsv" Variant="Variant.Outlined"
+                          HelperText="e.g. acme.com, contractors.acme.com" />
+
+            <MudStack Row="true" Spacing="2">
+                <MudButton OnClick="SaveAsync" Variant="Variant.Filled" Color="Color.Primary">
+                    Save
+                </MudButton>
+                <MudButton OnClick="ClearAsync" Variant="Variant.Outlined" Color="Color.Error">
+                    Clear configuration
+                </MudButton>
+            </MudStack>
+            @if (_message is not null)
+            {
+                <MudAlert Severity="@_messageSeverity">@_message</MudAlert>
+            }
+        </MudStack>
+    }
+    else
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+    }
+</MudPaper>
+
+@code {
+    private InputModel Input { get; set; } = new();
+    private bool _loaded;
+    private bool _hasExistingSecret;
+    private string? _message;
+    private Severity _messageSeverity = Severity.Info;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var existing = await OidcConfig.GetAsync(default);
+        if (existing is not null)
+        {
+            Input.Enabled = existing.Enabled;
+            Input.DisplayName = existing.DisplayName;
+            Input.Authority = existing.Authority;
+            Input.ClientId = existing.ClientId;
+            Input.AutoProvision = existing.AutoProvision;
+            Input.AutoProvisionDomainsCsv = string.Join(", ", existing.AutoProvisionDomains);
+            _hasExistingSecret = existing.HasClientSecret;
+        }
+        _loaded = true;
+    }
+
+    private async Task SaveAsync()
+    {
+        var domains = (Input.AutoProvisionDomainsCsv ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToArray();
+
+        await OidcConfig.SaveAsync(new SaveOidcConfigRequest(
+            Input.Enabled,
+            Input.DisplayName ?? "Sign in with SSO",
+            Input.Authority,
+            Input.ClientId,
+            Input.ClientSecret, // may be null/empty — service preserves the prior value
+            Input.AutoProvision,
+            domains), default);
+
+        Input.ClientSecret = ""; // never round-trip the just-typed secret
+        _hasExistingSecret = true;
+        _message = "Saved. Restart the app for sign-in changes to take effect.";
+        _messageSeverity = Severity.Success;
+    }
+
+    private async Task ClearAsync()
+    {
+        if (await OidcConfig.ClearAsync(default))
+        {
+            Input = new InputModel();
+            _hasExistingSecret = false;
+            _message = "Configuration cleared. Restart the app to remove the registered scheme.";
+            _messageSeverity = Severity.Info;
+        }
+        else
+        {
+            _message = "Nothing to clear.";
+            _messageSeverity = Severity.Info;
+        }
+    }
+
+    private sealed class InputModel
+    {
+        public bool Enabled { get; set; }
+        public string? DisplayName { get; set; } = "Sign in with SSO";
+        public string? Authority { get; set; }
+        public string? ClientId { get; set; }
+        public string? ClientSecret { get; set; }
+        public bool AutoProvision { get; set; }
+        public string? AutoProvisionDomainsCsv { get; set; }
+    }
+}

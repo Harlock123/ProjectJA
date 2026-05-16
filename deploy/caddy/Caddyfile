@@ -1,0 +1,7 @@
+# Default Caddyfile. Replace ${PROJECTJA_HOST} via env var at deploy time,
+# or edit directly for on-prem. Caddy auto-provisions Let's Encrypt certs.
+
+{$PROJECTJA_HOST} {
+    encode zstd gzip
+    reverse_proxy app:8080
+}
