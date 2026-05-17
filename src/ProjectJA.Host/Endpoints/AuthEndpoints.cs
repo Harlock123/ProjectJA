@@ -121,6 +121,89 @@ internal static class AuthEndpoints
             return Results.Redirect("/projects");
         });
 
+        // Sign-out must run in a real HTTP request: an interactive Blazor circuit
+        // can't write the auth-cookie deletion to a response that's already been
+        // sent. The profile menu POSTs a form here. No [FromForm] params, so the
+        // antiforgery middleware doesn't require a token — same as /signin-external.
+        app.MapPost("/logout", async (
+            HttpContext ctx,
+            SignInManager<ApplicationUser> signIn) =>
+        {
+            await signIn.SignOutAsync();
+            return Results.Redirect("/login");
+        });
+
+        // Defensive: a direct GET (bookmark, or the cookie LogoutPath) just
+        // bounces to the login page instead of a dead 405.
+        app.MapGet("/logout", () => Results.Redirect("/login"));
+
+        // Sign-IN has the same constraint as sign-out. With the whole routed
+        // tree InteractiveServer, an EditForm submit runs in the SignalR
+        // circuit, where PasswordSignInAsync's cookie write throws
+        // "Headers are read-only, response has already started." and the
+        // user just sees nothing. The login form POSTs here instead, into a
+        // real HTTP request. Path is "/signin" (not "/login") because the
+        // routable Login.razor page already owns "/login" and the Razor
+        // component endpoint claims POST too — sharing the path throws
+        // AmbiguousMatchException. Form read manually (no [FromForm]) so the
+        // antiforgery gate matches /signin-external.
+        app.MapPost("/signin", async (
+            HttpContext ctx,
+            SignInManager<ApplicationUser> signIn) =>
+        {
+            var form = await ctx.Request.ReadFormAsync();
+            var email = form["email"].ToString();
+            var password = form["password"].ToString();
+            var rememberMe = form["rememberMe"] == "true";
+            var returnUrl = form["returnUrl"].ToString();
+
+            var result = await signIn.PasswordSignInAsync(
+                email, password, rememberMe, lockoutOnFailure: false);
+
+            if (result.Succeeded)
+                return Results.LocalRedirect(
+                    string.IsNullOrWhiteSpace(returnUrl) ? "/projects" : returnUrl);
+
+            var reason = result.IsLockedOut ? "locked"
+                       : result.IsNotAllowed ? "notallowed"
+                       : "invalid";
+            return Results.Redirect($"/login?error={reason}");
+        });
+
+        // Accepting an invite creates the user AND signs them in, so it has
+        // the same cookie-write-in-circuit problem as /signin. Distinct path
+        // ("/accept-invite/submit", not "/accept-invite") to avoid colliding
+        // with the routable AcceptInvite.razor page endpoint.
+        app.MapPost("/accept-invite/submit", async (
+            HttpContext ctx,
+            IInviteService invites,
+            UserManager<ApplicationUser> users,
+            SignInManager<ApplicationUser> signIn) =>
+        {
+            var form = await ctx.Request.ReadFormAsync();
+            var token = form["token"].ToString();
+            var firstName = form["firstName"].ToString();
+            var lastName = form["lastName"].ToString();
+            var password = form["password"].ToString();
+
+            var result = await invites.AcceptAsync(
+                new AcceptInviteRequest(token, password, firstName, lastName),
+                ctx.RequestAborted);
+
+            if (!result.Success)
+            {
+                var msg = Uri.EscapeDataString(result.Error ?? "Unable to accept invite.");
+                var tok = Uri.EscapeDataString(token);
+                return Results.Redirect($"/accept-invite?token={tok}&error={msg}");
+            }
+
+            var user = await users.FindByEmailAsync(result.Email!);
+            if (user is not null)
+                await signIn.SignInAsync(user, isPersistent: false);
+
+            return Results.LocalRedirect("/projects");
+        });
+
         return app;
     }
 

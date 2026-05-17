@@ -1,11 +1,6 @@
 @page "/login"
-@using Microsoft.AspNetCore.Authentication
-@using Microsoft.AspNetCore.Identity
 @using ProjectJA.Host.Authentication
 @using ProjectJA.Modules.Identity.Contracts
-@using ProjectJA.Modules.Identity.Domain
-@inject SignInManager<ApplicationUser> SignIn
-@inject NavigationManager Nav
 @inject OidcAuthenticationOptions OidcGlobal
 @inject IOidcConfigService OidcConfig
 
@@ -15,18 +10,26 @@
     <MudPaper Class="pa-6" Elevation="2">
         <MudText Typo="Typo.h5" GutterBottom="true">Sign in</MudText>
 
-        <EditForm Model="Input" method="post" OnValidSubmit="LoginAsync" FormName="login">
+        @* Plain HTTP form posting to the /login endpoint. It must NOT be an
+           interactive EditForm: with the whole tree InteractiveServer, an
+           EditForm submit runs in the SignalR circuit and the cookie write
+           throws "Headers are read-only". A cross-document POST hits a real
+           HTTP request where SignInManager can set the auth cookie. *@
+        <form method="post" action="/signin">
+            <input type="hidden" name="returnUrl" value="@ReturnUrl" />
             <MudStack Spacing="3">
                 <div>
                     <label for="login-email" class="mud-typography mud-typography-body2">Email</label>
-                    <InputText id="login-email" @bind-Value="Input.Email" type="email" autocomplete="username" class="ssr-input" />
+                    <input id="login-email" name="email" type="email" autocomplete="username"
+                           class="ssr-input" required />
                 </div>
                 <div>
                     <label for="login-password" class="mud-typography mud-typography-body2">Password</label>
-                    <InputText id="login-password" @bind-Value="Input.Password" type="password" autocomplete="current-password" class="ssr-input" />
+                    <input id="login-password" name="password" type="password"
+                           autocomplete="current-password" class="ssr-input" required />
                 </div>
                 <label class="mud-typography mud-typography-body2" style="display:flex;align-items:center;gap:0.5rem;">
-                    <InputCheckbox @bind-Value="Input.RememberMe" /> Remember me
+                    <input type="checkbox" name="rememberMe" value="true" /> Remember me
                 </label>
                 <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true">
                     Sign in
@@ -39,7 +42,7 @@
                     <MudLink Href="/forgot-password">Forgot your password?</MudLink>
                 </MudText>
             </MudStack>
-        </EditForm>
+        </form>
 
         @if (_oidcLabel is not null)
         {
@@ -68,14 +71,22 @@
 </style>
 
 @code {
-    [SupplyParameterFromForm] public InputModel Input { get; set; } = new();
     [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+    [SupplyParameterFromQuery] public string? Error { get; set; }
 
     private string? _error;
     private string? _oidcLabel;
 
     protected override async Task OnInitializedAsync()
     {
+        _error = Error switch
+        {
+            "locked" => "Account locked.",
+            "notallowed" => "Sign-in not allowed.",
+            "invalid" => "Invalid email or password.",
+            _ => null,
+        };
+
         var tenantCfg = await OidcConfig.GetAsync(default);
         if (tenantCfg is { Enabled: true } && !string.IsNullOrWhiteSpace(tenantCfg.Authority))
         {
@@ -85,28 +96,5 @@
         {
             _oidcLabel = OidcGlobal.DisplayName;
         }
-    }
-
-    private async Task LoginAsync()
-    {
-        var result = await SignIn.PasswordSignInAsync(
-            Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: false);
-
-        if (result.Succeeded)
-        {
-            Nav.NavigateTo(string.IsNullOrEmpty(ReturnUrl) ? "/projects" : ReturnUrl);
-            return;
-        }
-
-        _error = result.IsLockedOut ? "Account locked." :
-                 result.IsNotAllowed ? "Sign-in not allowed." :
-                 "Invalid email or password.";
-    }
-
-    public sealed class InputModel
-    {
-        public string Email { get; set; } = "";
-        public string Password { get; set; } = "";
-        public bool RememberMe { get; set; }
     }
 }

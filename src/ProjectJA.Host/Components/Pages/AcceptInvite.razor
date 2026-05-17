@@ -1,11 +1,4 @@
 @page "/accept-invite"
-@using Microsoft.AspNetCore.Identity
-@using ProjectJA.Modules.Identity.Contracts
-@using ProjectJA.Modules.Identity.Domain
-@inject IInviteService InviteService
-@inject SignInManager<ApplicationUser> SignIn
-@inject UserManager<ApplicationUser> Users
-@inject NavigationManager Nav
 
 <PageTitle>Accept invite</PageTitle>
 
@@ -17,26 +10,27 @@
         {
             <MudAlert Severity="Severity.Error">This URL is missing the invite token.</MudAlert>
         }
-        else if (_completed)
-        {
-            <MudAlert Severity="Severity.Success">Welcome aboard, @Input.FirstName. Redirecting…</MudAlert>
-        }
         else
         {
-            <EditForm Model="@Input" method="post" OnValidSubmit="AcceptAsync" FormName="accept-invite">
-                <input type="hidden" name="Token" value="@Token" />
+            @* Plain HTTP form posting to the /accept-invite/submit endpoint.
+               It must NOT be an interactive EditForm: accepting an invite
+               signs the new user in, and a cookie write in the SignalR
+               circuit throws "Headers are read-only". A cross-document POST
+               hits a real HTTP request where SignInManager can set it. *@
+            <form method="post" action="/accept-invite/submit">
+                <input type="hidden" name="token" value="@Token" />
                 <MudStack Spacing="3">
                     <div>
                         <label for="ai-first" class="mud-typography mud-typography-body2">First name</label>
-                        <InputText id="ai-first" @bind-Value="Input.FirstName" autocomplete="given-name" class="ssr-input" />
+                        <input id="ai-first" name="firstName" autocomplete="given-name" class="ssr-input" required />
                     </div>
                     <div>
                         <label for="ai-last" class="mud-typography mud-typography-body2">Last name</label>
-                        <InputText id="ai-last" @bind-Value="Input.LastName" autocomplete="family-name" class="ssr-input" />
+                        <input id="ai-last" name="lastName" autocomplete="family-name" class="ssr-input" required />
                     </div>
                     <div>
                         <label for="ai-pwd" class="mud-typography mud-typography-body2">Password</label>
-                        <InputText id="ai-pwd" @bind-Value="Input.Password" type="password" autocomplete="new-password" class="ssr-input" />
+                        <input id="ai-pwd" name="password" type="password" autocomplete="new-password" class="ssr-input" required />
                     </div>
                     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true">
                         Create account
@@ -46,12 +40,13 @@
                         <MudAlert Severity="Severity.Error">@_error</MudAlert>
                     }
                 </MudStack>
-            </EditForm>
+            </form>
             <style>
                 .ssr-input {
                     width: 100%; padding: 0.6rem 0.75rem; border: 1px solid rgba(0,0,0,0.23);
                     border-radius: 4px; font: inherit; box-sizing: border-box; background: white;
                 }
+                .ssr-input:focus { outline: 2px solid #594ae2; outline-offset: -1px; }
             </style>
         }
     </MudPaper>
@@ -59,37 +54,10 @@
 
 @code {
     [SupplyParameterFromQuery] public string? Token { get; set; }
-    [SupplyParameterFromForm] public InputModel Input { get; set; } = new();
+    [SupplyParameterFromQuery] public string? Error { get; set; }
 
     private string? _error;
-    private bool _completed;
 
-    private async Task AcceptAsync()
-    {
-        _error = null;
-
-        var result = await InviteService.AcceptAsync(
-            new AcceptInviteRequest(Token ?? "", Input.Password, Input.FirstName, Input.LastName),
-            default);
-
-        if (!result.Success)
-        {
-            _error = result.Error ?? "Unable to accept invite.";
-            return;
-        }
-
-        var user = await Users.FindByEmailAsync(result.Email!);
-        if (user is not null)
-            await SignIn.SignInAsync(user, isPersistent: false);
-
-        _completed = true;
-        Nav.NavigateTo("/projects", forceLoad: true);
-    }
-
-    public sealed class InputModel
-    {
-        public string FirstName { get; set; } = "";
-        public string LastName { get; set; } = "";
-        public string Password { get; set; } = "";
-    }
+    protected override void OnInitialized() =>
+        _error = string.IsNullOrWhiteSpace(Error) ? null : Error;
 }
