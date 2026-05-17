@@ -170,6 +170,32 @@ dotnet run --project src/ProjectJA.Host
 
 Default credentials seeded on first run: `admin@projectja.local` / `ChangeMe123!` (override via the `Bootstrap:*` configuration keys). `--rm` only drops the container — data lives in the `projectja-pgdata` volume and survives restarts; to wipe and re-bootstrap a clean DB: `docker rm -f projectja-pg && docker volume rm projectja-pgdata`.
 
+### Inspecting the database
+
+The Docker container publishes Postgres on `localhost:5432`, so any SQL client connects with no special Docker networking:
+
+| Setting | Value |
+|---|---|
+| Host | `localhost` |
+| Port | `5432` |
+| Database | `projectja` (on-prem); `projectja_directory` + per-tenant `tenant_{slug}` in SaaS mode |
+| User / Password | `postgres` / `postgres` |
+
+GUI options (SSMS-style):
+
+- **Rider's built-in Database tool** — Rider bundles the DataGrip engine. View → Tool Windows → Database → **+** → Data Source → PostgreSQL. No extra install; this is the path of least resistance if you're already in Rider.
+- **[DBeaver](https://dbeaver.io/) Community** (free, cross-platform) — the strongest standalone free option.
+- **[pgAdmin 4](https://www.pgadmin.org/)** (free) — the official Postgres tool, closest in scope to SSMS.
+- **[TablePlus](https://tableplus.com/)** / **[Postico 2](https://eggerapps.at/postico2/)** (freemium) — polished native macOS clients.
+
+No-GUI quick peek (no install — runs `psql` inside the container):
+
+```sh
+docker exec -it projectja-pg psql -U postgres -d projectja
+```
+
+In SaaS mode the schema is split across databases: the tenant directory lives in `projectja_directory`, and each provisioned tenant gets its own `tenant_{slug}` database. Connect to the same server and switch databases in the client to inspect each one.
+
 ### Provisioning a new tenant (SaaS mode)
 
 ```sh
