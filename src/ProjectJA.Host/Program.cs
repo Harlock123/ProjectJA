@@ -154,6 +154,10 @@ builder.Services.AddSingleton<IRealtimeNotifier, SignalRRealtimeNotifier>();
 
 builder.Services.AddMudServices();
 
+// Per-user theming: immutable catalog (singleton) + per-circuit selection (scoped).
+builder.Services.AddSingleton<ProjectJA.Host.Theming.ThemeCatalog>();
+builder.Services.AddScoped<ProjectJA.Host.Theming.ThemeState>();
+
 builder.Services.AddScheduler();
 
 var app = builder.Build();

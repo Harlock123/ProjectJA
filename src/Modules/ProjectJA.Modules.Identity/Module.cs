@@ -14,6 +14,7 @@ public static class IdentityModule
     {
         services.AddScoped<IOrganizationQueries, OrganizationQueries>();
         services.AddScoped<IUserQueries, UserQueries>();
+        services.AddScoped<IUserPreferences, UserPreferences>();
         services.AddScoped<IInviteService, InviteService>();
         services.AddScoped<IOidcConfigService, OidcConfigService>();
         return services;

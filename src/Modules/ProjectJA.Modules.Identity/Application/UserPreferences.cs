@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: BUSL-1.1
+using Microsoft.EntityFrameworkCore;
+using ProjectJA.Modules.Identity.Contracts;
+using ProjectJA.Modules.Identity.Domain;
+
+namespace ProjectJA.Modules.Identity.Application;
+
+internal sealed class UserPreferences(DbContext db) : IUserPreferences
+{
+    public async Task<ThemePreference> GetThemeAsync(Guid userId, CancellationToken ct)
+    {
+        var row = await db.Set<ApplicationUser>()
+            .AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => new ThemePreference(u.ThemeKey, u.ThemeDark))
+            .FirstOrDefaultAsync(ct);
+
+        return row ?? new ThemePreference(null, false);
+    }
+
+    public async Task SetThemeAsync(Guid userId, string? themeKey, bool dark, CancellationToken ct)
+    {
+        var user = await db.Set<ApplicationUser>().FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null) return;
+
+        user.ThemeKey = themeKey;
+        user.ThemeDark = dark;
+        await db.SaveChangesAsync(ct);
+    }
+}

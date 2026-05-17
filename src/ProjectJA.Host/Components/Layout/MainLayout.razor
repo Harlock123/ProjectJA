@@ -1,6 +1,15 @@
 @inherits LayoutComponentBase
+@implements IDisposable
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+@using ProjectJA.Host.Theming
+@using ProjectJA.Modules.Identity.Contracts
+@inject ThemeCatalog Catalog
+@inject ThemeState ThemeState
+@inject AuthenticationStateProvider Auth
+@inject IUserPreferences Preferences
 
-<MudThemeProvider />
+<MudThemeProvider Theme="@Catalog.Resolve(ThemeState.ThemeKey)" IsDarkMode="@ThemeState.IsDark" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
@@ -31,6 +40,7 @@
                         <MudText Typo="Typo.body2">@context.User.Identity?.Name</MudText>
                     </MudMenuItem>
                     <MudDivider />
+                    <MudMenuItem Href="/settings/appearance" Icon="@Icons.Material.Filled.Palette">Appearance</MudMenuItem>
                     <MudMenuItem>
                         <form method="post" action="/logout" style="margin:0;width:100%;">
                             <button type="submit"
@@ -59,3 +69,35 @@
     <a href="." class="reload">Reload</a>
     <span class="dismiss">x</span>
 </div>
+
+@code {
+    private bool _themeLoaded;
+
+    protected override void OnInitialized() => ThemeState.Changed += OnThemeChanged;
+
+    // The theme preference read is deliberately NOT in OnInitializedAsync: the
+    // whole circuit shares one scoped AppDbContext, and a DB call here would run
+    // concurrently with the routed page's own OnInitializedAsync DB calls
+    // ("a second operation was started on this context instance"). OnAfterRender
+    // for firstRender runs only after every component's OnInitializedAsync (and
+    // their DB work) has completed, so this single read can't overlap anything.
+    // Brief default-theme flash before this lands is the accepted Slice-1 FOUC.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _themeLoaded) return;
+        _themeLoaded = true;
+
+        var authState = await Auth.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated == true
+            && Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
+        {
+            var pref = await Preferences.GetThemeAsync(userId, default);
+            ThemeState.Set(Catalog.IsKnown(pref.ThemeKey) ? pref.ThemeKey : null, pref.Dark);
+        }
+    }
+
+    private void OnThemeChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => ThemeState.Changed -= OnThemeChanged;
+}
