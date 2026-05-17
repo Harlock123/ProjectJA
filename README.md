@@ -158,16 +158,17 @@ Tests cover: anonymous routing (smoke), bootstrap state (default tenant + org + 
 ### Running locally (on-prem mode)
 
 ```sh
-# Start a Postgres:
+# Start a Postgres (named volume keeps data across container restarts):
 docker run --rm -d --name projectja-pg \
   -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=projectja \
-  -p 5432:5432 postgres:16-alpine
+  -p 5432:5432 -v projectja-pgdata:/var/lib/postgresql/data \
+  postgres:16-alpine
 
 # Run the app:
 dotnet run --project src/ProjectJA.Host
 ```
 
-Default credentials seeded on first run: `admin@projectja.local` / `ChangeMe123!` (override via the `Bootstrap:*` configuration keys).
+Default credentials seeded on first run: `admin@projectja.local` / `ChangeMe123!` (override via the `Bootstrap:*` configuration keys). `--rm` only drops the container — data lives in the `projectja-pgdata` volume and survives restarts; to wipe and re-bootstrap a clean DB: `docker rm -f projectja-pg && docker volume rm projectja-pgdata`.
 
 ### Provisioning a new tenant (SaaS mode)
 
