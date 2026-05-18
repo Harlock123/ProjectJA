@@ -1,0 +1,348 @@
+@using System.Security.Claims
+@using ProjectJA.Modules.Identity.Contracts
+@using ProjectJA.Modules.Issues.Contracts
+@inject AppDbContext Db
+@inject IClock Clock
+@inject IUserQueries Users
+@inject IAttachmentService Attachments
+@inject AuthenticationStateProvider Auth
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            @(_loaded && _issue is not null ? $"{_projectKey}-{_issue.Number}" : "Issue")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (!_loaded)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (_issue is null)
+        {
+            <MudAlert Severity="Severity.Error">Issue not found.</MudAlert>
+        }
+        else
+        {
+            <MudTabs Elevation="0" Rounded="true" KeepPanelsAlive="true" Style="min-width:34rem;">
+                <MudTabPanel Text="Details">
+                    <MudStack Spacing="3" Class="pt-3">
+                        <MudTextField Label="Title" @bind-Value="_edit.Title"
+                                      Variant="Variant.Outlined" Required="true" MaxLength="300" />
+                        <MudStack Row="true" Spacing="2">
+                            <MudSelect T="IssueType" Label="Type" @bind-Value="_edit.Type"
+                                       Variant="Variant.Outlined" Dense="true">
+                                @foreach (var t in Enum.GetValues<IssueType>())
+                                {
+                                    <MudSelectItem Value="t">@t</MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudSelect T="IssueStatus" Label="Status" @bind-Value="_edit.Status"
+                                       Variant="Variant.Outlined" Dense="true">
+                                @foreach (var s in Enum.GetValues<IssueStatus>())
+                                {
+                                    <MudSelectItem Value="s">@s</MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudNumericField T="int?" Label="Points" @bind-Value="_edit.Points"
+                                             Variant="Variant.Outlined" Min="0" Max="100" />
+                        </MudStack>
+                        <MudStack Row="true" Spacing="2">
+                            <MudSelect T="Guid?" Label="Assignee" @bind-Value="_edit.AssigneeId"
+                                       Variant="Variant.Outlined" Dense="true" Clearable="true">
+                                @foreach (var u in _users)
+                                {
+                                    <MudSelectItem T="Guid?" Value="@u.Id">@u.DisplayName</MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudSelect T="Guid" Label="Reporter" @bind-Value="_edit.ReporterId"
+                                       Variant="Variant.Outlined" Dense="true">
+                                @foreach (var u in _users)
+                                {
+                                    <MudSelectItem T="Guid" Value="@u.Id">@u.DisplayName</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudStack>
+                        <MudTextField Label="Description" @bind-Value="_edit.Description"
+                                      Variant="Variant.Outlined" Lines="3" />
+                        <MudTextField Label="Acceptance Criteria / Definition of Done"
+                                      @bind-Value="_edit.AcceptanceCriteria"
+                                      Variant="Variant.Outlined" Lines="3" />
+                        @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
+                    </MudStack>
+                </MudTabPanel>
+
+                <MudTabPanel Text="@($"Attachments ({_attachments?.Count ?? 0})")">
+                    <MudStack Spacing="2" Class="pt-3">
+                        <input type="file" id="@_uploadInputId" />
+                        @if (_attachError is not null) { <MudAlert Severity="Severity.Error">@_attachError</MudAlert> }
+                        @if (_attachments is null)
+                        {
+                            <MudText>Loading…</MudText>
+                        }
+                        else if (_attachments.Count == 0)
+                        {
+                            <MudText Color="Color.Default">No attachments.</MudText>
+                        }
+                        else
+                        {
+                            <MudTable Items="_attachments" Hover="true" Dense="true">
+                                <HeaderContent>
+                                    <MudTh>File</MudTh>
+                                    <MudTh Style="width:6rem;">Size</MudTh>
+                                    <MudTh Style="width:11rem;">Uploaded</MudTh>
+                                    <MudTh Style="width:5rem;"></MudTh>
+                                </HeaderContent>
+                                <RowTemplate>
+                                    <MudTd>
+                                        <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small"
+                                                   OnClick="@(() => DownloadAsync(context.Id))"
+                                                   StartIcon="@Icons.Material.Filled.Download">@context.FileName</MudButton>
+                                    </MudTd>
+                                    <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@FormatSize(context.SizeBytes)</MudText></MudTd>
+                                    <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@context.UploadedAt.ToString("yyyy-MM-dd HH:mm")</MudText></MudTd>
+                                    <MudTd>
+                                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                                                       OnClick="@(() => DeleteAttachmentAsync(context.Id))" />
+                                    </MudTd>
+                                </RowTemplate>
+                            </MudTable>
+                        }
+                    </MudStack>
+                </MudTabPanel>
+
+                <MudTabPanel Text="@($"Comments ({_comments.Count})")">
+                    <MudStack Spacing="3" Class="pt-3">
+                        @if (_comments.Count == 0)
+                        {
+                            <MudText Color="Color.Default">No comments yet.</MudText>
+                        }
+                        else
+                        {
+                            <MudStack Spacing="2">
+                                @foreach (var c in _comments)
+                                {
+                                    <MudPaper Class="pa-2" Elevation="0" Style="background:#f7f7f7;">
+                                        <MudText Typo="Typo.caption" Color="Color.Default">
+                                            <strong>@AuthorName(c.AuthorId)</strong> · @c.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                                        </MudText>
+                                        <MudText Typo="Typo.body2" Style="white-space:pre-wrap;">@c.Body</MudText>
+                                    </MudPaper>
+                                }
+                            </MudStack>
+                        }
+                        <MudTextField @bind-Value="_newComment" Label="Add a comment"
+                                      Variant="Variant.Outlined" Lines="3" MaxLength="8000" />
+                        <div>
+                            <MudButton OnClick="AddCommentAsync" Variant="Variant.Filled" Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.Send"
+                                       Disabled="@string.IsNullOrWhiteSpace(_newComment)">Comment</MudButton>
+                        </div>
+                    </MudStack>
+                </MudTabPanel>
+            </MudTabs>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Close</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   OnClick="SaveAsync" Disabled="@(!_loaded || _issue is null)">Save details</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public Guid IssueId { get; set; }
+
+    private bool _loaded;
+    private bool _jsInited;
+    private bool _changed;
+    private Issue? _issue;
+    private string? _projectKey;
+    private string? _error;
+    private string? _attachError;
+    private Guid _currentUserId;
+    private string _uploadInputId = "";
+    private string _newComment = "";
+    private IReadOnlyList<UserSummary> _users = Array.Empty<UserSummary>();
+    private Dictionary<Guid, string> _userNames = new();
+    private List<AttachmentSummary>? _attachments;
+    private List<Comment> _comments = new();
+    private EditModel _edit = new();
+    private DotNetObjectReference<IssueEditDialog>? _selfRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _uploadInputId = $"dlg-upload-{IssueId:N}";
+
+        var authState = await Auth.GetAuthenticationStateAsync();
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _currentUserId);
+
+        Db.ChangeTracker.Clear();
+        _issue = await Db.Issues.AsNoTracking()
+            .Include(i => i.Comments)
+            .FirstOrDefaultAsync(i => i.Id == IssueId);
+        if (_issue is not null)
+        {
+            var project = await Db.Projects.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == _issue.ProjectId);
+            _projectKey = project?.Key ?? "?";
+            _users = await Users.ListAllAsync(default);
+            _userNames = _users.ToDictionary(u => u.Id, u => u.DisplayName);
+            _comments = _issue.Comments.OrderBy(c => c.CreatedAt).ToList();
+            _edit = new EditModel
+            {
+                Title = _issue.Title,
+                Description = _issue.Description,
+                Type = _issue.Type,
+                Status = _issue.Status,
+                Points = _issue.Points,
+                AcceptanceCriteria = _issue.AcceptanceCriteria,
+                AssigneeId = _issue.AssigneeId,
+                ReporterId = _issue.ReporterId,
+            };
+            var attachments = await Attachments.ListAsync(IssueId, default);
+            _attachments = attachments.ToList();
+        }
+        _loaded = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_jsInited || !_loaded || _issue is null) return;
+        _jsInited = true;
+        _selfRef = DotNetObjectReference.Create(this);
+        // Panels are kept alive, so the file input is in the DOM even when the
+        // Attachments tab isn't active. JS guards against double-binding.
+        await JS.InvokeVoidAsync("projectja.uploads.init", _selfRef, _uploadInputId, IssueId);
+    }
+
+    private string AuthorName(Guid id) =>
+        _userNames.TryGetValue(id, out var n) ? n : "(unknown)";
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_edit.Title))
+        {
+            _error = "Title is required.";
+            return;
+        }
+
+        var tracked = await Db.Issues.FirstOrDefaultAsync(i => i.Id == IssueId);
+        if (tracked is null)
+        {
+            _error = "Issue no longer exists.";
+            return;
+        }
+
+        tracked.Edit(_edit.Title, _edit.Description, Clock.UtcNow);
+        tracked.Reclassify(_edit.Type, _edit.Points, _edit.AcceptanceCriteria, Clock.UtcNow);
+        tracked.Assign(_edit.AssigneeId, Clock.UtcNow);
+        if (_edit.ReporterId != Guid.Empty)
+            tracked.SetReporter(_edit.ReporterId, Clock.UtcNow);
+        if (tracked.Status != _edit.Status)
+            tracked.Transition(_edit.Status, Clock.UtcNow);
+        await Db.SaveChangesAsync();
+
+        MudDialog.Close(DialogResult.Ok(IssueId));
+    }
+
+    // Close returns Ok if attachments/comments changed underlying data so the
+    // caller can refresh; otherwise a plain cancel.
+    private void Cancel()
+    {
+        if (_changed) MudDialog.Close(DialogResult.Ok(IssueId));
+        else MudDialog.Cancel();
+    }
+
+    private async Task AddCommentAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newComment) || _currentUserId == Guid.Empty) return;
+
+        var tracked = await Db.Issues.Include(i => i.Comments)
+            .FirstOrDefaultAsync(i => i.Id == IssueId);
+        if (tracked is null) return;
+
+        tracked.AddComment(_currentUserId, _newComment.Trim(), Clock.UtcNow);
+        await Db.SaveChangesAsync();
+
+        _newComment = "";
+        _changed = true;
+        await ReloadCommentsAsync();
+    }
+
+    private async Task ReloadCommentsAsync()
+    {
+        Db.ChangeTracker.Clear();
+        var fresh = await Db.Issues.AsNoTracking()
+            .Include(i => i.Comments)
+            .FirstOrDefaultAsync(i => i.Id == IssueId);
+        _comments = fresh?.Comments.OrderBy(c => c.CreatedAt).ToList() ?? new();
+    }
+
+    [JSInvokable]
+    public async Task OnUploadComplete(Guid attachmentId)
+    {
+        _attachError = null;
+        _changed = true;
+        await ReloadAttachmentsAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task OnUploadError(string message)
+    {
+        _attachError = $"Upload failed: {message}";
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ReloadAttachmentsAsync()
+    {
+        var list = await Attachments.ListAsync(IssueId, default);
+        _attachments = list.ToList();
+    }
+
+    private async Task DownloadAsync(Guid attachmentId)
+    {
+        var url = await Attachments.GetDownloadUrlAsync(attachmentId, TimeSpan.FromMinutes(15), default);
+        if (url is null) return;
+        await JS.InvokeVoidAsync("open", url.ToString(), "_blank");
+    }
+
+    private async Task DeleteAttachmentAsync(Guid attachmentId)
+    {
+        if (await Attachments.DeleteAsync(attachmentId, default))
+        {
+            _changed = true;
+            await ReloadAttachmentsAsync();
+        }
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:0.#} KB";
+        return $"{bytes / 1024.0 / 1024.0:0.##} MB";
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _selfRef?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    private sealed class EditModel
+    {
+        public string Title { get; set; } = "";
+        public string? Description { get; set; }
+        public IssueType Type { get; set; } = IssueType.Task;
+        public IssueStatus Status { get; set; } = IssueStatus.Todo;
+        public int? Points { get; set; }
+        public string? AcceptanceCriteria { get; set; }
+        public Guid? AssigneeId { get; set; }
+        public Guid ReporterId { get; set; }
+    }
+}

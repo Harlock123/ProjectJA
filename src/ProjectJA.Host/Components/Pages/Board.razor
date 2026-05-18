@@ -2,11 +2,13 @@
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @rendermode InteractiveServer
 @using ProjectJA.Host.Hubs
+@using ProjectJA.Host.Components.Dialogs
 @using ProjectJA.SharedKernel.Tenancy
 @inject AppDbContext Db
 @inject IClock Clock
 @inject ITenantContext Tenant
 @inject BoardEventStream EventStream
+@inject IDialogService DialogService
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
@@ -40,6 +42,8 @@ else
                              data-issue-id="@issue.Id"
                              @key="issue.Id"
                              class="board-card"
+                             title="Double-click to edit"
+                             @ondblclick="@(() => OpenEditAsync(issue.Id))"
                              style="cursor:grab;background:white;border:1px solid #ddd;border-radius:4px;padding:0.5rem 0.75rem;margin-bottom:0.5rem;">
                             <div style="font-family:monospace;font-size:0.75rem;color:#888;">@_project.Key-@issue.Number</div>
                             <div style="font-size:0.9rem;">@issue.Title</div>
@@ -128,6 +132,30 @@ else
 
         await ReloadAsync();
         await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OpenEditAsync(Guid issueId)
+    {
+        var parameters = new DialogParameters<IssueEditDialog> { { x => x.IssueId, issueId } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<IssueEditDialog>("Edit issue", parameters, options);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled) return;
+
+        await ReloadAsync();
+        await InvokeAsync(StateHasChanged);
+
+        // Mirror the drop path: tell other clients/boards to refresh. The edit
+        // may have changed status (lane), so republish the issue's current state.
+        if (_groupName is not null)
+        {
+            var edited = _issues.FirstOrDefault(i => i.Id == issueId);
+            if (edited is not null)
+                await EventStream.PublishAsync(
+                    _groupName,
+                    "IssueMoved",
+                    new { issueId = edited.Id, projectId = edited.ProjectId, status = (int)edited.Status });
+        }
     }
 
     private async Task HandleEventAsync(string eventName, object payload)
