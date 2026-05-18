@@ -23,8 +23,12 @@ public sealed class SmokeTests(AppFactory factory)
             AllowAutoRedirect = false,
         });
         var response = await client.GetAsync("/projects");
-        // Cookie auth issues a 302 redirect to the configured LoginPath.
+        // Cookie auth issues a 302 redirect to the configured LoginPath. The
+        // Location may be absolute (http://localhost/login?...) or relative
+        // depending on the host — assert on the path only.
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.StartsWith("/login", response.Headers.Location!.OriginalString);
+        var location = response.Headers.Location!;
+        var path = location.IsAbsoluteUri ? location.AbsolutePath : location.OriginalString;
+        Assert.StartsWith("/login", path);
     }
 }
