@@ -2,9 +2,12 @@
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @rendermode InteractiveServer
 @using ProjectJA.Modules.Issues.Contracts
+@using ProjectJA.Modules.Identity.Contracts
 @inject AppDbContext Db
 @inject IClock Clock
 @inject IAttachmentService Attachments
+@inject IUserQueries Users
+@inject ISnackbar Snackbar
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
@@ -23,14 +26,69 @@ else
         <span style="font-family:monospace;">@_projectKey-@_issue.Number</span>
         <MudChip T="string" Color="@StatusColor(_issue.Status)" Size="Size.Small" Class="ml-2">@_issue.Status</MudChip>
     </MudText>
-    <MudText Typo="Typo.h6" Class="mb-3">@_issue.Title</MudText>
-
-    @if (!string.IsNullOrWhiteSpace(_issue.Description))
-    {
-        <MudPaper Class="pa-3 mb-4" Elevation="0" Style="background:#f7f7f7;">
-            <pre style="white-space:pre-wrap;margin:0;font-family:inherit;">@_issue.Description</pre>
-        </MudPaper>
-    }
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudText Typo="Typo.h6" GutterBottom="true">Details</MudText>
+        <MudGrid Spacing="3">
+            <MudItem xs="12">
+                <MudTextField Label="Title" @bind-Value="_edit.Title"
+                              Variant="Variant.Outlined" Required="true" MaxLength="300" />
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudSelect T="IssueType" Label="Type" @bind-Value="_edit.Type"
+                           Variant="Variant.Outlined" Dense="true">
+                    @foreach (var t in Enum.GetValues<IssueType>())
+                    {
+                        <MudSelectItem Value="t">@t</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudNumericField T="int?" Label="Points" @bind-Value="_edit.Points"
+                                 Variant="Variant.Outlined" Min="0" Max="100" />
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudTextField Label="Status" Value="@_issue.Status.ToString()" ReadOnly="true"
+                              Variant="Variant.Outlined"
+                              HelperText="Change status on the board or project list." />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudSelect T="Guid?" Label="Assignee" @bind-Value="_edit.AssigneeId"
+                           Variant="Variant.Outlined" Dense="true" Clearable="true">
+                    @foreach (var u in _users)
+                    {
+                        <MudSelectItem T="Guid?" Value="@u.Id">@u.DisplayName</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudSelect T="Guid" Label="Reporter" @bind-Value="_edit.ReporterId"
+                           Variant="Variant.Outlined" Dense="true">
+                    @foreach (var u in _users)
+                    {
+                        <MudSelectItem T="Guid" Value="@u.Id">@u.DisplayName</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField Label="Description" @bind-Value="_edit.Description"
+                              Variant="Variant.Outlined" Lines="4" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField Label="Acceptance Criteria / Definition of Done"
+                              @bind-Value="_edit.AcceptanceCriteria"
+                              Variant="Variant.Outlined" Lines="4"
+                              HelperText="What must be true for this work to be considered done." />
+            </MudItem>
+        </MudGrid>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3" Class="mt-3">
+            <MudButton OnClick="SaveAsync" Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Save">Save details</MudButton>
+            <MudText Typo="Typo.caption" Color="Color.Default">
+                Created by @CreatorName • @_issue.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+            </MudText>
+        </MudStack>
+        @if (_saveError is not null) { <MudAlert Severity="Severity.Error" Class="mt-2">@_saveError</MudAlert> }
+    </MudPaper>
 
     <MudPaper Class="pa-4" Elevation="1">
         <MudText Typo="Typo.h6" GutterBottom="true">Attachments</MudText>
@@ -82,7 +140,15 @@ else
     private string? _projectKey;
     private List<AttachmentSummary>? _attachments;
     private string? _error;
+    private string? _saveError;
     private DotNetObjectReference<IssueDetail>? _selfRef;
+
+    private IReadOnlyList<UserSummary> _users = Array.Empty<UserSummary>();
+    private Dictionary<Guid, string> _userNames = new();
+    private EditModel _edit = new();
+
+    private string CreatorName =>
+        _issue is not null && _userNames.TryGetValue(_issue.CreatedById, out var n) ? n : "—";
 
     protected override async Task OnInitializedAsync() => await ReloadAsync();
 
@@ -98,12 +164,65 @@ else
     private async Task ReloadAsync()
     {
         _error = null;
+        // Same scoped AppDbContext lives for the whole circuit; clear so we read
+        // fresh rows after a save instead of tracked/cached copies.
+        Db.ChangeTracker.Clear();
         _issue = await Db.Issues.AsNoTracking().FirstOrDefaultAsync(i => i.Id == IssueId);
         if (_issue is null) return;
         var project = await Db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == _issue.ProjectId);
         _projectKey = project?.Key ?? "?";
+        _users = await Users.ListAllAsync(default);
+        _userNames = _users.ToDictionary(u => u.Id, u => u.DisplayName);
+        _edit = new EditModel
+        {
+            Title = _issue.Title,
+            Description = _issue.Description,
+            Type = _issue.Type,
+            Points = _issue.Points,
+            AcceptanceCriteria = _issue.AcceptanceCriteria,
+            AssigneeId = _issue.AssigneeId,
+            ReporterId = _issue.ReporterId,
+        };
         var list = await Attachments.ListAsync(IssueId, default);
         _attachments = list.ToList();
+    }
+
+    private async Task SaveAsync()
+    {
+        _saveError = null;
+        if (string.IsNullOrWhiteSpace(_edit.Title))
+        {
+            _saveError = "Title is required.";
+            return;
+        }
+
+        var tracked = await Db.Issues.FirstOrDefaultAsync(i => i.Id == IssueId);
+        if (tracked is null)
+        {
+            _saveError = "Issue no longer exists.";
+            return;
+        }
+
+        tracked.Edit(_edit.Title, _edit.Description, Clock.UtcNow);
+        tracked.Reclassify(_edit.Type, _edit.Points, _edit.AcceptanceCriteria, Clock.UtcNow);
+        tracked.Assign(_edit.AssigneeId, Clock.UtcNow);
+        if (_edit.ReporterId != Guid.Empty)
+            tracked.SetReporter(_edit.ReporterId, Clock.UtcNow);
+        await Db.SaveChangesAsync();
+
+        await ReloadAsync();
+        Snackbar.Add("Issue details saved.", Severity.Success);
+    }
+
+    private sealed class EditModel
+    {
+        public string Title { get; set; } = "";
+        public string? Description { get; set; }
+        public IssueType Type { get; set; } = IssueType.Task;
+        public int? Points { get; set; }
+        public string? AcceptanceCriteria { get; set; }
+        public Guid? AssigneeId { get; set; }
+        public Guid ReporterId { get; set; }
     }
 
     [JSInvokable]

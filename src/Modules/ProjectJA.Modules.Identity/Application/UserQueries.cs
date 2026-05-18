@@ -31,6 +31,15 @@ internal sealed class UserQueries(DbContext db) : IUserQueries
         return rows.ToDictionary(r => r.Id);
     }
 
+    public async Task<IReadOnlyList<UserSummary>> ListAllAsync(CancellationToken ct)
+    {
+        return await db.Set<ApplicationUser>()
+            .AsNoTracking()
+            .OrderBy(u => u.FirstName).ThenBy(u => u.LastName).ThenBy(u => u.Email)
+            .Select(u => new UserSummary(u.Id, u.Email!, BuildDisplayName(u)))
+            .ToListAsync(ct);
+    }
+
     private static string BuildDisplayName(ApplicationUser u)
     {
         var name = ($"{u.FirstName} {u.LastName}").Trim();

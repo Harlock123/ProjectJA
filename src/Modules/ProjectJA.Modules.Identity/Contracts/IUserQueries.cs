@@ -7,4 +7,6 @@ public interface IUserQueries
 {
     Task<UserSummary?> GetByIdAsync(Guid userId, CancellationToken ct);
     Task<IReadOnlyDictionary<Guid, UserSummary>> GetSummariesAsync(IEnumerable<Guid> userIds, CancellationToken ct);
+    /// <summary>All users in the current tenant org — used for assignee/reporter pickers.</summary>
+    Task<IReadOnlyList<UserSummary>> ListAllAsync(CancellationToken ct);
 }

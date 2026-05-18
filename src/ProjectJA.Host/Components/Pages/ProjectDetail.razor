@@ -1,9 +1,13 @@
 @page "/projects/{projectId:guid}"
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @rendermode InteractiveServer
+@using System.Security.Claims
+@using ProjectJA.Modules.Identity.Contracts
 @inject AppDbContext Db
 @inject IClock Clock
 @inject NavigationManager Nav
+@inject AuthenticationStateProvider Auth
+@inject IUserQueries Users
 
 <PageTitle>@(_project?.Name ?? "Project")</PageTitle>
 
@@ -42,13 +46,17 @@ else
                     <MudTable Items="_issues" Hover="true" Dense="true">
                         <HeaderContent>
                             <MudTh>Key</MudTh>
+                            <MudTh>Type</MudTh>
                             <MudTh>Title</MudTh>
+                            <MudTh Style="width:5rem;">Pts</MudTh>
                             <MudTh>Status</MudTh>
                             <MudTh>Updated</MudTh>
                         </HeaderContent>
                         <RowTemplate>
                             <MudTd><MudLink Href="@($"/issues/{context.Id}")" Style="font-family:monospace;">@_project.Key-@context.Number</MudLink></MudTd>
+                            <MudTd><MudChip T="string" Size="Size.Small" Color="@TypeColor(context.Type)" Variant="Variant.Outlined">@context.Type</MudChip></MudTd>
                             <MudTd>@context.Title</MudTd>
+                            <MudTd>@(context.Points?.ToString() ?? "—")</MudTd>
                             <MudTd>
                                 <MudSelect T="IssueStatus" Value="context.Status" ValueChanged="@(v => TransitionAsync(context, v))" Dense="true" Margin="Margin.Dense">
                                     <MudSelectItem Value="IssueStatus.Todo">Todo</MudSelectItem>
@@ -78,9 +86,26 @@ else
                                   @bind-Value="_draft.Title"
                                   Variant="Variant.Outlined" Required="true" MaxLength="300" />
                     <MudTextField Label="Description (optional)"
-                                  Placeholder="Context, acceptance criteria, links…"
+                                  Placeholder="Context, links…"
                                   @bind-Value="_draft.Description"
                                   Variant="Variant.Outlined" Lines="4" />
+                    <MudSelect T="IssueType" Label="Type" @bind-Value="_draft.Type"
+                               Variant="Variant.Outlined" Dense="true">
+                        @foreach (var t in Enum.GetValues<IssueType>())
+                        {
+                            <MudSelectItem Value="t">@t</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudNumericField T="int?" Label="Points (optional)" @bind-Value="_draft.Points"
+                                     Variant="Variant.Outlined" Min="0" Max="100"
+                                     HelperText="Relative effort estimate; leave blank if unestimated." />
+                    <MudSelect T="Guid?" Label="Assignee (optional)" @bind-Value="_draft.AssigneeId"
+                               Variant="Variant.Outlined" Dense="true" Clearable="true">
+                        @foreach (var u in _users)
+                        {
+                            <MudSelectItem T="Guid?" Value="@u.Id">@u.DisplayName</MudSelectItem>
+                        }
+                    </MudSelect>
                     <MudButton OnClick="CreateAsync" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
                                StartIcon="@Icons.Material.Filled.Add">Create issue</MudButton>
                     @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
@@ -95,10 +120,17 @@ else
 
     private Project? _project;
     private List<Issue>? _issues;
+    private IReadOnlyList<UserSummary> _users = Array.Empty<UserSummary>();
+    private Guid _currentUserId;
     private Draft _draft = new();
     private string? _error;
 
-    protected override async Task OnInitializedAsync() => await ReloadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _currentUserId);
+        await ReloadAsync();
+    }
 
     private async Task ReloadAsync()
     {
@@ -112,6 +144,7 @@ else
             .Where(i => i.ProjectId == ProjectId)
             .OrderBy(i => i.Number)
             .ToListAsync();
+        _users = await Users.ListAllAsync(default);
     }
 
     private async Task CreateAsync()
@@ -124,10 +157,15 @@ else
             return;
         }
 
-        var createdBy = await Db.Users.Select(u => u.Id).FirstOrDefaultAsync();
+        var createdBy = _currentUserId != Guid.Empty
+            ? _currentUserId
+            : await Db.Users.Select(u => u.Id).FirstOrDefaultAsync();
         var tracked = await Db.Projects.FirstAsync(p => p.Id == ProjectId);
         var number = tracked.AllocateIssueNumber();
         var issue = Issue.Create(tracked.Id, number, _draft.Title, _draft.Description, createdBy, Clock.UtcNow);
+        issue.Reclassify(_draft.Type, _draft.Points, null, Clock.UtcNow);
+        if (_draft.AssigneeId is not null)
+            issue.Assign(_draft.AssigneeId, Clock.UtcNow);
         Db.Issues.Add(issue);
         await Db.SaveChangesAsync();
         _draft = new();
@@ -142,9 +180,22 @@ else
         await ReloadAsync();
     }
 
+    private static Color TypeColor(IssueType t) => t switch
+    {
+        IssueType.Story => Color.Info,
+        IssueType.Defect => Color.Error,
+        IssueType.Spike => Color.Secondary,
+        IssueType.Epic => Color.Primary,
+        IssueType.Enhancement => Color.Success,
+        _ => Color.Default,
+    };
+
     private sealed class Draft
     {
         public string Title { get; set; } = "";
         public string? Description { get; set; }
+        public IssueType Type { get; set; } = IssueType.Task;
+        public int? Points { get; set; }
+        public Guid? AssigneeId { get; set; }
     }
 }

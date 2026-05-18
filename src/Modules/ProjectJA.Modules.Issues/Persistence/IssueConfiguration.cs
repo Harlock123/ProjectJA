@@ -19,11 +19,16 @@ public sealed class IssueConfiguration : IEntityTypeConfiguration<Issue>
         b.Property(x => x.Title).HasMaxLength(300).IsRequired();
         b.Property(x => x.Description).HasMaxLength(8000);
         b.Property(x => x.Status).HasConversion<int>().IsRequired();
+        b.Property(x => x.Type).HasConversion<int>().IsRequired();
+        b.Property(x => x.Points);
+        b.Property(x => x.AcceptanceCriteria).HasMaxLength(8000);
+        b.Property(x => x.ReporterId).IsRequired();
         b.Property(x => x.CreatedById).IsRequired();
         b.Property(x => x.CreatedAt).IsRequired();
         b.Property(x => x.UpdatedAt).IsRequired();
         b.HasIndex(x => new { x.ProjectId, x.Number }).IsUnique();
         b.HasIndex(x => new { x.ProjectId, x.Status });
+        b.HasIndex(x => new { x.ProjectId, x.Type });
 
         // Postgres FTS: generated tsvector column (weighted: title = A, description = B)
         // with a GIN index for fast indexed search.

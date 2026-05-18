@@ -16,8 +16,13 @@ namespace ProjectJA.Modules.Issues.Endpoints;
 
 internal static class IssuesEndpoints
 {
-    internal sealed record CreateIssueRequest(string Title, string? Description);
-    internal sealed record EditIssueRequest(string Title, string? Description);
+    internal sealed record CreateIssueRequest(
+        string Title, string? Description,
+        IssueType? Type, int? Points, string? AcceptanceCriteria, Guid? AssigneeId);
+    internal sealed record EditIssueRequest(
+        string Title, string? Description,
+        IssueType Type, int? Points, string? AcceptanceCriteria,
+        Guid? AssigneeId, Guid ReporterId);
     internal sealed record TransitionRequest(IssueStatus Status);
     internal sealed record AddCommentRequest(string Body, Guid AuthorId);
     internal sealed record BeginUploadEndpointRequest(string FileName, string? ContentType, long SizeBytes);
@@ -29,6 +34,11 @@ internal static class IssuesEndpoints
         string Title,
         string? Description,
         IssueStatus Status,
+        IssueType Type,
+        int? Points,
+        string? AcceptanceCriteria,
+        Guid? AssigneeId,
+        Guid ReporterId,
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt);
 
@@ -49,7 +59,8 @@ internal static class IssuesEndpoints
                 .OrderBy(i => i.Number)
                 .Select(i => new IssueDto(
                     i.Id, i.ProjectId, project.Key, i.Number, i.Title, i.Description,
-                    i.Status, i.CreatedAt, i.UpdatedAt))
+                    i.Status, i.Type, i.Points, i.AcceptanceCriteria, i.AssigneeId, i.ReporterId,
+                    i.CreatedAt, i.UpdatedAt))
                 .ToListAsync(ct);
             return Results.Ok(items);
         })
@@ -81,6 +92,9 @@ internal static class IssuesEndpoints
             var createdBy = Guid.Empty;
 
             var issue = Issue.Create(project.Id, number.Value, req.Title, req.Description, createdBy, clock.UtcNow);
+            issue.Reclassify(req.Type ?? IssueType.Task, req.Points, req.AcceptanceCriteria, clock.UtcNow);
+            if (req.AssigneeId is not null)
+                issue.Assign(req.AssigneeId, clock.UtcNow);
             db.Set<Issue>().Add(issue);
             await db.SaveChangesAsync(ct);
 
@@ -93,7 +107,8 @@ internal static class IssuesEndpoints
 
             return Results.Created($"/api/issues/{issue.Id}", new IssueDto(
                 issue.Id, issue.ProjectId, project.Key, issue.Number, issue.Title, issue.Description,
-                issue.Status, issue.CreatedAt, issue.UpdatedAt));
+                issue.Status, issue.Type, issue.Points, issue.AcceptanceCriteria,
+                issue.AssigneeId, issue.ReporterId, issue.CreatedAt, issue.UpdatedAt));
         })
         .WithName("CreateIssue")
         .WithSummary("Create a new issue in a project")
@@ -115,7 +130,8 @@ internal static class IssuesEndpoints
 
             return Results.Ok(new IssueDto(
                 issue.Id, issue.ProjectId, project.Key, issue.Number, issue.Title, issue.Description,
-                issue.Status, issue.CreatedAt, issue.UpdatedAt));
+                issue.Status, issue.Type, issue.Points, issue.AcceptanceCriteria,
+                issue.AssigneeId, issue.ReporterId, issue.CreatedAt, issue.UpdatedAt));
         })
         .WithName("GetIssue")
         .WithSummary("Get a single issue by id")
@@ -133,6 +149,10 @@ internal static class IssuesEndpoints
             var issue = await db.Set<Issue>().FirstOrDefaultAsync(i => i.Id == id, ct);
             if (issue is null) return Results.NotFound();
             issue.Edit(req.Title, req.Description, clock.UtcNow);
+            issue.Reclassify(req.Type, req.Points, req.AcceptanceCriteria, clock.UtcNow);
+            issue.Assign(req.AssigneeId, clock.UtcNow);
+            if (req.ReporterId != Guid.Empty)
+                issue.SetReporter(req.ReporterId, clock.UtcNow);
             await db.SaveChangesAsync(ct);
             return Results.NoContent();
         })

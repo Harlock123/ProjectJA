@@ -9,7 +9,13 @@ public sealed class Issue
     public string Title { get; private set; } = default!;
     public string? Description { get; private set; }
     public IssueStatus Status { get; private set; }
+    public IssueType Type { get; private set; }
+    public int? Points { get; private set; }
+    public string? AcceptanceCriteria { get; private set; }
     public Guid? AssigneeId { get; private set; }
+    /// <summary>Who reported/recorded the issue. Defaults to the creator; editable.</summary>
+    public Guid ReporterId { get; private set; }
+    /// <summary>Immutable system record of who actually created the row.</summary>
     public Guid CreatedById { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
@@ -27,7 +33,9 @@ public sealed class Issue
         Title = title;
         Description = description;
         Status = IssueStatus.Todo;
+        Type = IssueType.Task;
         CreatedById = createdById;
+        ReporterId = createdById;
         CreatedAt = now;
         UpdatedAt = now;
     }
@@ -48,9 +56,24 @@ public sealed class Issue
         UpdatedAt = now;
     }
 
+    /// <summary>Update the agile classification: type, story points, and DoD/acceptance criteria.</summary>
+    public void Reclassify(IssueType type, int? points, string? acceptanceCriteria, DateTimeOffset now)
+    {
+        Type = type;
+        Points = points;
+        AcceptanceCriteria = acceptanceCriteria;
+        UpdatedAt = now;
+    }
+
     public void Assign(Guid? assigneeId, DateTimeOffset now)
     {
         AssigneeId = assigneeId;
+        UpdatedAt = now;
+    }
+
+    public void SetReporter(Guid reporterId, DateTimeOffset now)
+    {
+        ReporterId = reporterId;
         UpdatedAt = now;
     }
 
