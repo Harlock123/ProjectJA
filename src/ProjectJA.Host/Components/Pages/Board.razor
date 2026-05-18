@@ -3,12 +3,14 @@
 @rendermode InteractiveServer
 @using ProjectJA.Host.Hubs
 @using ProjectJA.Host.Components.Dialogs
+@using ProjectJA.Host.Theming
 @using ProjectJA.SharedKernel.Tenancy
 @inject AppDbContext Db
 @inject IClock Clock
 @inject ITenantContext Tenant
 @inject BoardEventStream EventStream
 @inject IDialogService DialogService
+@inject ThemeState ThemeState
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
@@ -33,7 +35,7 @@ else
             <MudItem xs="12" sm="4">
                 <div class="board-column"
                      data-status="@((int)col)"
-                     style="@($"min-height:24rem;background:{ColumnBackground(col)};border:1px solid #e0e0e0;border-radius:6px;padding:0.5rem;")">
+                     style="@($"min-height:24rem;background:{ColumnBackground(col)};border:1px solid {LaneBorder()};border-radius:6px;padding:0.5rem;")">
                     <MudText Typo="Typo.subtitle1" Style="font-weight:600;" Class="px-1 pb-2">@col</MudText>
 
                     @foreach (var issue in IssuesIn(col))
@@ -44,9 +46,13 @@ else
                              class="board-card"
                              title="Double-click to edit"
                              @ondblclick="@(() => OpenEditAsync(issue.Id))"
-                             style="cursor:grab;background:white;border:1px solid #ddd;border-radius:4px;padding:0.5rem 0.75rem;margin-bottom:0.5rem;">
-                            <div style="font-family:monospace;font-size:0.75rem;color:#888;">@_project.Key-@issue.Number</div>
-                            <div style="font-size:0.9rem;">@issue.Title</div>
+                             style="@($"cursor:grab;background:{CardBackground()};border:1px solid {CardBorder()};border-radius:4px;padding:0.5rem 0.75rem;margin-bottom:0.5rem;")">
+                            <div style="@($"font-family:monospace;font-size:0.75rem;color:{CardKeyColor()};")">@_project.Key-@issue.Number</div>
+                            <div style="@($"font-size:0.9rem;color:{CardTitleColor()};")">@issue.Title</div>
+                            @if (!string.IsNullOrWhiteSpace(issue.Description))
+                            {
+                                <div style="@($"font-size:0.8rem;color:{CardDescColor()};margin-top:0.15rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;")">@issue.Description</div>
+                            }
                         </div>
                     }
                 </div>
@@ -75,7 +81,13 @@ else
         await ReloadAsync();
         _groupName = $"tenant:{Tenant.Current.Value:N}:project:{ProjectId:N}";
         _subscription = EventStream.Subscribe(_groupName, HandleEventAsync);
+        // Re-render lane colours when the user toggles dark mode while on the board.
+        // (ThemeState is loaded by MainLayout post-render, so this also fires once
+        //  the saved preference resolves.)
+        ThemeState.Changed += OnThemeChanged;
     }
+
+    private void OnThemeChanged() => InvokeAsync(StateHasChanged);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -101,13 +113,35 @@ else
     private IEnumerable<Issue> IssuesIn(IssueStatus column) =>
         _issues.Where(i => i.Status == column);
 
-    private static string ColumnBackground(IssueStatus col) => col switch
-    {
-        IssueStatus.Todo => "#fafafa",
-        IssueStatus.Doing => "#fff8e1",
-        IssueStatus.Done => "#e8f5e9",
-        _ => "#fafafa",
-    };
+    // Light lanes are near-white tints; in dark mode those glare, so swap to
+    // muted dark tints that keep the same Todo/Doing/Done hue cue. (A literal
+    // 30% darken of a near-white still reads as bright on a dark page — these
+    // are tuned dark values; adjust the hexes here to taste.)
+    private string ColumnBackground(IssueStatus col) => ThemeState.IsDark
+        ? col switch
+        {
+            IssueStatus.Todo => "#26262e",
+            IssueStatus.Doing => "#2e2a1c",
+            IssueStatus.Done => "#1e2b22",
+            _ => "#26262e",
+        }
+        : col switch
+        {
+            IssueStatus.Todo => "#fafafa",
+            IssueStatus.Doing => "#fff8e1",
+            IssueStatus.Done => "#e8f5e9",
+            _ => "#fafafa",
+        };
+
+    private string LaneBorder() => ThemeState.IsDark ? "#3a3a44" : "#e0e0e0";
+
+    // Cards: light = white on tinted lanes; dark = a surface a touch lighter
+    // than the dark lanes so cards still "pop", with readable muted text.
+    private string CardBackground() => ThemeState.IsDark ? "#30303a" : "white";
+    private string CardBorder() => ThemeState.IsDark ? "#44444f" : "#ddd";
+    private string CardKeyColor() => ThemeState.IsDark ? "#9a9aa5" : "#888";
+    private string CardTitleColor() => ThemeState.IsDark ? "#e6e6ea" : "inherit";
+    private string CardDescColor() => ThemeState.IsDark ? "#a0a0ab" : "#6a6a6a";
 
     [JSInvokable]
     public async Task OnCardDropped(string issueId, int statusInt)
@@ -167,6 +201,7 @@ else
 
     public ValueTask DisposeAsync()
     {
+        ThemeState.Changed -= OnThemeChanged;
         _subscription?.Dispose();
         _selfRef?.Dispose();
         return ValueTask.CompletedTask;
