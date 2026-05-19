@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 using System.Security.Claims;
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -19,8 +20,11 @@ internal static class AuthEndpoints
     {
         app.MapPost("/signin-external", async (
             HttpContext ctx,
+            IAntiforgery antiforgery,
             IAuthenticationSchemeProvider schemeProvider) =>
         {
+            if (await AntiforgeryFailureAsync(antiforgery, ctx) is { } af) return af;
+
             // Prefer tenant-specific scheme registered at startup; fall back to the
             // global "oidc" scheme if one is configured.
             string? schemeName = null;
@@ -127,8 +131,11 @@ internal static class AuthEndpoints
         // antiforgery middleware doesn't require a token — same as /signin-external.
         app.MapPost("/logout", async (
             HttpContext ctx,
+            IAntiforgery antiforgery,
             SignInManager<ApplicationUser> signIn) =>
         {
+            if (await AntiforgeryFailureAsync(antiforgery, ctx) is { } af) return af;
+
             await signIn.SignOutAsync();
             return Results.Redirect("/login");
         });
@@ -149,8 +156,11 @@ internal static class AuthEndpoints
         // antiforgery gate matches /signin-external.
         app.MapPost("/signin", async (
             HttpContext ctx,
+            IAntiforgery antiforgery,
             SignInManager<ApplicationUser> signIn) =>
         {
+            if (await AntiforgeryFailureAsync(antiforgery, ctx) is { } af) return af;
+
             var form = await ctx.Request.ReadFormAsync();
             var email = form["email"].ToString();
             var password = form["password"].ToString();
@@ -176,10 +186,13 @@ internal static class AuthEndpoints
         // with the routable AcceptInvite.razor page endpoint.
         app.MapPost("/accept-invite/submit", async (
             HttpContext ctx,
+            IAntiforgery antiforgery,
             IInviteService invites,
             UserManager<ApplicationUser> users,
             SignInManager<ApplicationUser> signIn) =>
         {
+            if (await AntiforgeryFailureAsync(antiforgery, ctx) is { } af) return af;
+
             var form = await ctx.Request.ReadFormAsync();
             var token = form["token"].ToString();
             var firstName = form["firstName"].ToString();
@@ -205,6 +218,22 @@ internal static class AuthEndpoints
         });
 
         return app;
+    }
+
+    // These POSTs read the form manually (no [FromForm]) so the antiforgery
+    // middleware doesn't auto-gate them — validate explicitly. On a missing/
+    // expired/forged token, bounce to login rather than process the request.
+    private static async Task<IResult?> AntiforgeryFailureAsync(IAntiforgery antiforgery, HttpContext ctx)
+    {
+        try
+        {
+            await antiforgery.ValidateRequestAsync(ctx);
+            return null;
+        }
+        catch (AntiforgeryValidationException)
+        {
+            return Results.Redirect("/login?error=expired");
+        }
     }
 
     private static bool DomainAllowed(string email, IReadOnlyList<string> domains)

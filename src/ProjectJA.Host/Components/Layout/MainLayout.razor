@@ -43,6 +43,7 @@
                     <MudMenuItem Href="/settings/appearance" Icon="@Icons.Material.Filled.Palette">Appearance</MudMenuItem>
                     <MudMenuItem>
                         <form method="post" action="/logout" style="margin:0;width:100%;">
+                            <AntiforgeryToken />
                             <button type="submit"
                                     style="all:unset;cursor:pointer;display:block;width:100%;">
                                 Sign out

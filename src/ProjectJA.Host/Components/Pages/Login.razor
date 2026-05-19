@@ -16,6 +16,7 @@
            throws "Headers are read-only". A cross-document POST hits a real
            HTTP request where SignInManager can set the auth cookie. *@
         <form method="post" action="/signin">
+            <AntiforgeryToken />
             <input type="hidden" name="returnUrl" value="@ReturnUrl" />
             <MudStack Spacing="3">
                 <div>
@@ -48,6 +49,7 @@
         {
             <MudDivider Class="my-4" />
             <form method="post" action="/signin-external">
+                <AntiforgeryToken />
                 <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Outlined" Color="Color.Primary"
                            FullWidth="true" StartIcon="@Icons.Material.Filled.Login">
                     @_oidcLabel
@@ -84,6 +86,7 @@
             "locked" => "Account locked.",
             "notallowed" => "Sign-in not allowed.",
             "invalid" => "Invalid email or password.",
+            "expired" => "Your form session expired. Please try again.",
             _ => null,
         };
 

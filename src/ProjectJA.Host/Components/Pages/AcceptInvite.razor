@@ -18,6 +18,7 @@
                circuit throws "Headers are read-only". A cross-document POST
                hits a real HTTP request where SignInManager can set it. *@
             <form method="post" action="/accept-invite/submit">
+                <AntiforgeryToken />
                 <input type="hidden" name="token" value="@Token" />
                 <MudStack Spacing="3">
                     <div>
