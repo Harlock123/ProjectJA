@@ -47,6 +47,7 @@ else
                         <HeaderContent>
                             <MudTh>Key</MudTh>
                             <MudTh>Type</MudTh>
+                            <MudTh>Priority</MudTh>
                             <MudTh>Title</MudTh>
                             <MudTh Style="width:5rem;">Pts</MudTh>
                             <MudTh>Status</MudTh>
@@ -55,7 +56,19 @@ else
                         <RowTemplate>
                             <MudTd><MudLink Href="@($"/issues/{context.Id}")" Style="font-family:monospace;">@_project.Key-@context.Number</MudLink></MudTd>
                             <MudTd><MudChip T="string" Size="Size.Small" Color="@TypeColor(context.Type)" Variant="Variant.Outlined">@context.Type</MudChip></MudTd>
-                            <MudTd>@context.Title</MudTd>
+                            <MudTd><MudChip T="string" Size="Size.Small" Color="@PriorityColor(context.Priority)">@context.Priority</MudChip></MudTd>
+                            <MudTd>
+                                @context.Title
+                                @if (context.Labels.Count > 0)
+                                {
+                                    <div class="mt-1">
+                                        @foreach (var lbl in context.Labels)
+                                        {
+                                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="mr-1">@lbl</MudChip>
+                                        }
+                                    </div>
+                                }
+                            </MudTd>
                             <MudTd>@(context.Points?.ToString() ?? "—")</MudTd>
                             <MudTd>
                                 <MudSelect T="IssueStatus" Value="context.Status" ValueChanged="@(v => TransitionAsync(context, v))" Dense="true" Margin="Margin.Dense">
@@ -96,6 +109,17 @@ else
                             <MudSelectItem Value="t">@t</MudSelectItem>
                         }
                     </MudSelect>
+                    <MudSelect T="IssuePriority" Label="Priority" @bind-Value="_draft.Priority"
+                               Variant="Variant.Outlined" Dense="true">
+                        @foreach (var p in Enum.GetValues<IssuePriority>())
+                        {
+                            <MudSelectItem Value="p">@p</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudTextField Label="Labels (optional)" @bind-Value="_draft.Labels"
+                                  Placeholder="comma-separated, e.g. backend, urgent"
+                                  HelperText="Free-text tags, comma-separated."
+                                  Variant="Variant.Outlined" />
                     <MudNumericField T="int?" Label="Points (optional)" @bind-Value="_draft.Points"
                                      Variant="Variant.Outlined" Min="0" Max="100"
                                      HelperText="Relative effort estimate; leave blank if unestimated." />
@@ -164,6 +188,8 @@ else
         var number = tracked.AllocateIssueNumber();
         var issue = Issue.Create(tracked.Id, number, _draft.Title, _draft.Description, createdBy, Clock.UtcNow);
         issue.Reclassify(_draft.Type, _draft.Points, null, Clock.UtcNow);
+        issue.SetPriority(_draft.Priority, Clock.UtcNow);
+        issue.SetLabels(SplitLabels(_draft.Labels), Clock.UtcNow);
         if (_draft.AssigneeId is not null)
             issue.Assign(_draft.AssigneeId, Clock.UtcNow);
         Db.Issues.Add(issue);
@@ -180,6 +206,20 @@ else
         await ReloadAsync();
     }
 
+    private static IEnumerable<string> SplitLabels(string? csv) =>
+        string.IsNullOrWhiteSpace(csv)
+            ? Array.Empty<string>()
+            : csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static Color PriorityColor(IssuePriority p) => p switch
+    {
+        IssuePriority.Critical => Color.Error,
+        IssuePriority.High => Color.Warning,
+        IssuePriority.Medium => Color.Info,
+        IssuePriority.Low => Color.Default,
+        _ => Color.Default,
+    };
+
     private static Color TypeColor(IssueType t) => t switch
     {
         IssueType.Story => Color.Info,
@@ -195,6 +235,8 @@ else
         public string Title { get; set; } = "";
         public string? Description { get; set; }
         public IssueType Type { get; set; } = IssueType.Task;
+        public IssuePriority Priority { get; set; } = IssuePriority.Medium;
+        public string? Labels { get; set; }
         public int? Points { get; set; }
         public Guid? AssigneeId { get; set; }
     }

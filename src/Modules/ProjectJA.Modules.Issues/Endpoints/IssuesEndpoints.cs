@@ -18,11 +18,12 @@ internal static class IssuesEndpoints
 {
     internal sealed record CreateIssueRequest(
         string Title, string? Description,
-        IssueType? Type, int? Points, string? AcceptanceCriteria, Guid? AssigneeId);
+        IssueType? Type, IssuePriority? Priority, int? Points, string? AcceptanceCriteria,
+        Guid? AssigneeId, IReadOnlyList<string>? Labels);
     internal sealed record EditIssueRequest(
         string Title, string? Description,
-        IssueType Type, int? Points, string? AcceptanceCriteria,
-        Guid? AssigneeId, Guid ReporterId);
+        IssueType Type, IssuePriority Priority, int? Points, string? AcceptanceCriteria,
+        Guid? AssigneeId, Guid ReporterId, IReadOnlyList<string>? Labels);
     internal sealed record TransitionRequest(IssueStatus Status);
     internal sealed record AddCommentRequest(string Body, Guid AuthorId);
     internal sealed record BeginUploadEndpointRequest(string FileName, string? ContentType, long SizeBytes);
@@ -35,10 +36,12 @@ internal static class IssuesEndpoints
         string? Description,
         IssueStatus Status,
         IssueType Type,
+        IssuePriority Priority,
         int? Points,
         string? AcceptanceCriteria,
         Guid? AssigneeId,
         Guid ReporterId,
+        IReadOnlyList<string> Labels,
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt);
 
@@ -59,8 +62,8 @@ internal static class IssuesEndpoints
                 .OrderBy(i => i.Number)
                 .Select(i => new IssueDto(
                     i.Id, i.ProjectId, project.Key, i.Number, i.Title, i.Description,
-                    i.Status, i.Type, i.Points, i.AcceptanceCriteria, i.AssigneeId, i.ReporterId,
-                    i.CreatedAt, i.UpdatedAt))
+                    i.Status, i.Type, i.Priority, i.Points, i.AcceptanceCriteria, i.AssigneeId, i.ReporterId,
+                    i.Labels, i.CreatedAt, i.UpdatedAt))
                 .ToListAsync(ct);
             return Results.Ok(items);
         })
@@ -95,6 +98,9 @@ internal static class IssuesEndpoints
 
             var issue = Issue.Create(project.Id, number.Value, req.Title, req.Description, createdBy, clock.UtcNow);
             issue.Reclassify(req.Type ?? IssueType.Task, req.Points, req.AcceptanceCriteria, clock.UtcNow);
+            issue.SetPriority(req.Priority ?? IssuePriority.Medium, clock.UtcNow);
+            if (req.Labels is not null)
+                issue.SetLabels(req.Labels, clock.UtcNow);
             if (req.AssigneeId is not null)
                 issue.Assign(req.AssigneeId, clock.UtcNow);
             db.Set<Issue>().Add(issue);
@@ -109,8 +115,8 @@ internal static class IssuesEndpoints
 
             return Results.Created($"/api/issues/{issue.Id}", new IssueDto(
                 issue.Id, issue.ProjectId, project.Key, issue.Number, issue.Title, issue.Description,
-                issue.Status, issue.Type, issue.Points, issue.AcceptanceCriteria,
-                issue.AssigneeId, issue.ReporterId, issue.CreatedAt, issue.UpdatedAt));
+                issue.Status, issue.Type, issue.Priority, issue.Points, issue.AcceptanceCriteria,
+                issue.AssigneeId, issue.ReporterId, issue.Labels, issue.CreatedAt, issue.UpdatedAt));
         })
         .RequireAuthorization()
         .WithName("CreateIssue")
@@ -134,8 +140,8 @@ internal static class IssuesEndpoints
 
             return Results.Ok(new IssueDto(
                 issue.Id, issue.ProjectId, project.Key, issue.Number, issue.Title, issue.Description,
-                issue.Status, issue.Type, issue.Points, issue.AcceptanceCriteria,
-                issue.AssigneeId, issue.ReporterId, issue.CreatedAt, issue.UpdatedAt));
+                issue.Status, issue.Type, issue.Priority, issue.Points, issue.AcceptanceCriteria,
+                issue.AssigneeId, issue.ReporterId, issue.Labels, issue.CreatedAt, issue.UpdatedAt));
         })
         .WithName("GetIssue")
         .WithSummary("Get a single issue by id")
@@ -154,6 +160,8 @@ internal static class IssuesEndpoints
             if (issue is null) return Results.NotFound();
             issue.Edit(req.Title, req.Description, clock.UtcNow);
             issue.Reclassify(req.Type, req.Points, req.AcceptanceCriteria, clock.UtcNow);
+            issue.SetPriority(req.Priority, clock.UtcNow);
+            issue.SetLabels(req.Labels ?? Array.Empty<string>(), clock.UtcNow);
             issue.Assign(req.AssigneeId, clock.UtcNow);
             if (req.ReporterId != Guid.Empty)
                 issue.SetReporter(req.ReporterId, clock.UtcNow);

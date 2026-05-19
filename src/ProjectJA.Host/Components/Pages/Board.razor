@@ -53,6 +53,19 @@ else
                             {
                                 <div style="@($"font-size:0.8rem;color:{CardDescColor()};margin-top:0.15rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;")">@issue.Description</div>
                             }
+                            @if (issue.Priority != IssuePriority.None || issue.Labels.Count > 0)
+                            {
+                                <div style="margin-top:0.35rem;display:flex;flex-wrap:wrap;gap:0.25rem;align-items:center;">
+                                    @if (issue.Priority != IssuePriority.None)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="@PriorityColor(issue.Priority)">@issue.Priority</MudChip>
+                                    }
+                                    @foreach (var lbl in issue.Labels)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@lbl</MudChip>
+                                    }
+                                </div>
+                            }
                         </div>
                     }
                 </div>
@@ -137,6 +150,14 @@ else
 
     // Cards: light = white on tinted lanes; dark = a surface a touch lighter
     // than the dark lanes so cards still "pop", with readable muted text.
+    private static Color PriorityColor(IssuePriority p) => p switch
+    {
+        IssuePriority.Critical => Color.Error,
+        IssuePriority.High => Color.Warning,
+        IssuePriority.Medium => Color.Info,
+        _ => Color.Default,
+    };
+
     private string CardBackground() => ThemeState.IsDark ? "#30303a" : "white";
     private string CardBorder() => ThemeState.IsDark ? "#44444f" : "#ddd";
     private string CardKeyColor() => ThemeState.IsDark ? "#9a9aa5" : "#888";

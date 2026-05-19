@@ -71,6 +71,19 @@
                                 }
                             </MudSelect>
                         </MudStack>
+                        <MudStack Row="true" Spacing="2">
+                            <MudSelect T="IssuePriority" Label="Priority" @bind-Value="_edit.Priority"
+                                       Variant="Variant.Outlined" Dense="true">
+                                @foreach (var p in Enum.GetValues<IssuePriority>())
+                                {
+                                    <MudSelectItem Value="p">@p</MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudTextField Label="Labels" @bind-Value="_edit.Labels"
+                                          Placeholder="comma-separated"
+                                          HelperText="Free-text tags, comma-separated."
+                                          Variant="Variant.Outlined" />
+                        </MudStack>
                         <MudTextField Label="Description" @bind-Value="_edit.Description"
                                       Variant="Variant.Outlined" Lines="3" />
                         <MudTextField Label="Acceptance Criteria / Definition of Done"
@@ -243,10 +256,12 @@
                     Description = _issue.Description,
                     Type = _issue.Type,
                     Status = _issue.Status,
+                    Priority = _issue.Priority,
                     Points = _issue.Points,
                     AcceptanceCriteria = _issue.AcceptanceCriteria,
                     AssigneeId = _issue.AssigneeId,
                     ReporterId = _issue.ReporterId,
+                    Labels = string.Join(", ", _issue.Labels),
                 };
                 var attachments = await Attachments.ListAsync(IssueId, default);
                 _attachments = attachments.ToList();
@@ -323,6 +338,8 @@
 
             tracked.Edit(_edit.Title, _edit.Description, Clock.UtcNow);
             tracked.Reclassify(_edit.Type, _edit.Points, _edit.AcceptanceCriteria, Clock.UtcNow);
+            tracked.SetPriority(_edit.Priority, Clock.UtcNow);
+            tracked.SetLabels(SplitLabels(_edit.Labels), Clock.UtcNow);
             tracked.Assign(_edit.AssigneeId, Clock.UtcNow);
             if (_edit.ReporterId != Guid.Empty)
                 tracked.SetReporter(_edit.ReporterId, Clock.UtcNow);
@@ -554,9 +571,16 @@
         public string? Description { get; set; }
         public IssueType Type { get; set; } = IssueType.Task;
         public IssueStatus Status { get; set; } = IssueStatus.Todo;
+        public IssuePriority Priority { get; set; } = IssuePriority.Medium;
         public int? Points { get; set; }
         public string? AcceptanceCriteria { get; set; }
         public Guid? AssigneeId { get; set; }
         public Guid ReporterId { get; set; }
+        public string? Labels { get; set; }
     }
+
+    private static IEnumerable<string> SplitLabels(string? csv) =>
+        string.IsNullOrWhiteSpace(csv)
+            ? Array.Empty<string>()
+            : csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 }

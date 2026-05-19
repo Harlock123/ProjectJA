@@ -20,6 +20,11 @@ public sealed class IssueConfiguration : IEntityTypeConfiguration<Issue>
         b.Property(x => x.Description).HasMaxLength(8000);
         b.Property(x => x.Status).HasConversion<int>().IsRequired();
         b.Property(x => x.Type).HasConversion<int>().IsRequired();
+        b.Property(x => x.Priority).HasConversion<int>().IsRequired();
+        // Free-text labels → Postgres text[] (Npgsql primitive collection),
+        // backed by the read-only Labels/_labels field. No join table / Label
+        // aggregate by design (anti-bloat; upgradeable later).
+        b.PrimitiveCollection(x => x.Labels);
         b.Property(x => x.Points);
         b.Property(x => x.AcceptanceCriteria).HasMaxLength(8000);
         b.Property(x => x.ReporterId).IsRequired();

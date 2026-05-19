@@ -10,6 +10,7 @@ public sealed class Issue
     public string? Description { get; private set; }
     public IssueStatus Status { get; private set; }
     public IssueType Type { get; private set; }
+    public IssuePriority Priority { get; private set; }
     public int? Points { get; private set; }
     public string? AcceptanceCriteria { get; private set; }
     public Guid? AssigneeId { get; private set; }
@@ -23,6 +24,9 @@ public sealed class Issue
     private readonly List<Comment> _comments = new();
     public IReadOnlyList<Comment> Comments => _comments;
 
+    private readonly List<string> _labels = new();
+    public IReadOnlyList<string> Labels => _labels;
+
     private Issue() { }
 
     public Issue(Guid id, Guid projectId, int number, string title, string? description, Guid createdById, DateTimeOffset now)
@@ -34,6 +38,7 @@ public sealed class Issue
         Description = description;
         Status = IssueStatus.Todo;
         Type = IssueType.Task;
+        Priority = IssuePriority.Medium;
         CreatedById = createdById;
         ReporterId = createdById;
         CreatedAt = now;
@@ -74,6 +79,31 @@ public sealed class Issue
     public void SetReporter(Guid reporterId, DateTimeOffset now)
     {
         ReporterId = reporterId;
+        UpdatedAt = now;
+    }
+
+    public void SetPriority(IssuePriority priority, DateTimeOffset now)
+    {
+        Priority = priority;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Replace the label set. Normalises: trims, drops blanks, caps each
+    /// at 40 chars, de-dupes case-insensitively (first casing wins), caps at 20.</summary>
+    public void SetLabels(IEnumerable<string> labels, DateTimeOffset now)
+    {
+        var cleaned = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in labels)
+        {
+            var label = raw?.Trim();
+            if (string.IsNullOrEmpty(label)) continue;
+            if (label.Length > 40) label = label[..40];
+            if (seen.Add(label)) cleaned.Add(label);
+            if (cleaned.Count == 20) break;
+        }
+        _labels.Clear();
+        _labels.AddRange(cleaned);
         UpdatedAt = now;
     }
 
