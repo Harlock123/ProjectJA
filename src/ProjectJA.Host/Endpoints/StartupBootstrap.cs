@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using ProjectJA.Infrastructure.Persistence;
 using ProjectJA.Infrastructure.Tenancy;
 using ProjectJA.Modules.Identity.Domain;
+using ProjectJA.Modules.Projects.Domain;
 using ProjectJA.SharedKernel.Tenancy;
 
 namespace ProjectJA.Host.Endpoints;
@@ -69,6 +70,37 @@ public static class StartupBootstrap
                 EmailConfirmed = true
             };
             await users.CreateAsync(admin, config["Bootstrap:AdminPassword"] ?? "ChangeMe123!");
+        }
+
+        // Backfill: projects created before membership existed have no members,
+        // which would lock everyone out. Give every such project all current
+        // users as Member + the bootstrap admin as Admin. Idempotent (only
+        // touches projects with zero members). EntityState.Added is required
+        // because adding an owned child with a set key to an already-tracked
+        // aggregate is otherwise misclassified Modified (UPDATE → 0 rows).
+        var allUserIds = await db.Users.Select(u => u.Id).ToListAsync();
+        if (allUserIds.Count > 0)
+        {
+            var adminEmail = config["Bootstrap:AdminEmail"] ?? "admin@projectja.local";
+            var adminId = await db.Users.Where(u => u.Email == adminEmail)
+                .Select(u => u.Id).FirstOrDefaultAsync();
+            if (adminId == Guid.Empty) adminId = allUserIds[0];
+
+            var projects = await db.Projects.Include(p => p.Members).ToListAsync();
+            var changed = false;
+            foreach (var project in projects.Where(p => p.Members.Count == 0))
+            {
+                var now = DateTimeOffset.UtcNow;
+                var adminMember = project.EnsureMember(adminId, ProjectRole.Admin, now);
+                if (adminMember is not null) db.Entry(adminMember).State = EntityState.Added;
+                foreach (var uid in allUserIds.Where(u => u != adminId))
+                {
+                    var member = project.EnsureMember(uid, ProjectRole.Member, now);
+                    if (member is not null) db.Entry(member).State = EntityState.Added;
+                }
+                changed = true;
+            }
+            if (changed) await db.SaveChangesAsync();
         }
     }
 }

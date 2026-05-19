@@ -18,5 +18,15 @@ public sealed class ProjectConfiguration : IEntityTypeConfiguration<Project>
         b.Property(x => x.NextIssueNumber).IsRequired();
         b.Property(x => x.CreatedAt).IsRequired();
         b.HasIndex(x => new { x.OrganizationId, x.Key }).IsUnique();
+
+        b.OwnsMany(x => x.Members, m =>
+        {
+            m.ToTable("project_members");
+            m.WithOwner().HasForeignKey(x => x.ProjectId);
+            m.HasKey(x => new { x.ProjectId, x.UserId });
+            m.Property(x => x.Role).HasConversion<int>().IsRequired();
+            m.Property(x => x.AddedAt).IsRequired();
+            m.HasIndex(x => x.UserId);
+        });
     }
 }

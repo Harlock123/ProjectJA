@@ -24,4 +24,29 @@ internal sealed class ProjectQueries(DbContext db) : IProjectQueries
         await db.SaveChangesAsync(ct);
         return n;
     }
+
+    public Task<bool> IsMemberAsync(Guid projectId, Guid userId, CancellationToken ct) =>
+        db.Set<Project>().AsNoTracking()
+            .AnyAsync(p => p.Id == projectId && p.Members.Any(m => m.UserId == userId), ct);
+
+    public async Task<ProjectRole?> GetRoleAsync(Guid projectId, Guid userId, CancellationToken ct)
+    {
+        var roles = await db.Set<Project>().AsNoTracking()
+            .Where(p => p.Id == projectId)
+            .SelectMany(p => p.Members)
+            .Where(m => m.UserId == userId)
+            .Select(m => (ProjectRole?)m.Role)
+            .FirstOrDefaultAsync(ct);
+        return roles;
+    }
+
+    public async Task<IReadOnlyList<ProjectMemberInfo>> ListMembersAsync(Guid projectId, CancellationToken ct)
+    {
+        return await db.Set<Project>().AsNoTracking()
+            .Where(p => p.Id == projectId)
+            .SelectMany(p => p.Members)
+            .OrderBy(m => m.AddedAt)
+            .Select(m => new ProjectMemberInfo(m.UserId, m.Role, m.AddedAt))
+            .ToListAsync(ct);
+    }
 }

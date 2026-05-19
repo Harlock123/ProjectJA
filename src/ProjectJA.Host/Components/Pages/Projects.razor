@@ -1,13 +1,22 @@
 @page "/projects"
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @rendermode InteractiveServer
+@using System.Security.Claims
 @inject AppDbContext Db
 @inject IClock Clock
 @inject NavigationManager Nav
+@inject AuthenticationStateProvider Auth
 
 <PageTitle>Projects</PageTitle>
 
 <MudText Typo="Typo.h4" GutterBottom="true">Projects</MudText>
+
+@if (Denied is not null)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-4">
+        You don't have access to that project, or it doesn't exist.
+    </MudAlert>
+}
 
 <MudGrid>
     <MudItem xs="12" md="8">
@@ -76,13 +85,24 @@
     private List<Project>? _projects;
     private Draft _draft = new();
     private string? _error;
+    private Guid _currentUserId;
+    [SupplyParameterFromQuery] public string? Denied { get; set; }
 
-    protected override async Task OnInitializedAsync() => await ReloadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _currentUserId);
+        await ReloadAsync();
+    }
 
     private async Task ReloadAsync()
     {
         Db.ChangeTracker.Clear();
-        _projects = await Db.Projects.AsNoTracking().OrderBy(p => p.Key).ToListAsync();
+        // Only projects the current user is a member of.
+        _projects = await Db.Projects.AsNoTracking()
+            .Where(p => p.Members.Any(m => m.UserId == _currentUserId))
+            .OrderBy(p => p.Key)
+            .ToListAsync();
     }
 
     private async Task CreateAsync()
@@ -97,7 +117,7 @@
         var org = await Db.Organizations.FirstOrDefaultAsync();
         if (org is null) { _error = "No organization. Restart the app to seed one."; return; }
 
-        var p = Project.Create(org.Id, _draft.Key, _draft.Name, _draft.Description, Clock.UtcNow);
+        var p = Project.Create(org.Id, _draft.Key, _draft.Name, _draft.Description, _currentUserId, Clock.UtcNow);
         Db.Projects.Add(p);
         await Db.SaveChangesAsync();
         _draft = new();

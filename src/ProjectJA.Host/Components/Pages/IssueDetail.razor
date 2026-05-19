@@ -1,12 +1,17 @@
 @page "/issues/{issueId:guid}"
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @rendermode InteractiveServer
+@using System.Security.Claims
 @using ProjectJA.Modules.Issues.Contracts
 @using ProjectJA.Modules.Identity.Contracts
+@using ProjectJA.Modules.Projects.Contracts
 @inject AppDbContext Db
 @inject IClock Clock
 @inject IAttachmentService Attachments
 @inject IUserQueries Users
+@inject IProjectQueries Projects
+@inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
 @inject ISnackbar Snackbar
 @inject IJSRuntime JS
 @implements IAsyncDisposable
@@ -150,7 +155,21 @@ else
     private string CreatorName =>
         _issue is not null && _userNames.TryGetValue(_issue.CreatedById, out var n) ? n : "—";
 
-    protected override async Task OnInitializedAsync() => await ReloadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId);
+        var projectId = await Db.Issues.AsNoTracking()
+            .Where(i => i.Id == IssueId)
+            .Select(i => (Guid?)i.ProjectId)
+            .FirstOrDefaultAsync();
+        if (projectId is null || !await Projects.IsMemberAsync(projectId.Value, userId, default))
+        {
+            Nav.NavigateTo("/projects?denied=1");
+            return;
+        }
+        await ReloadAsync();
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {

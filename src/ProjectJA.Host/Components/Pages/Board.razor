@@ -5,12 +5,17 @@
 @using ProjectJA.Host.Components.Dialogs
 @using ProjectJA.Host.Theming
 @using ProjectJA.SharedKernel.Tenancy
+@using System.Security.Claims
+@using ProjectJA.Modules.Projects.Contracts
 @inject AppDbContext Db
 @inject IClock Clock
 @inject ITenantContext Tenant
 @inject BoardEventStream EventStream
 @inject IDialogService DialogService
 @inject ThemeState ThemeState
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider Auth
+@inject IProjectQueries Projects
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
@@ -91,6 +96,13 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId);
+        if (!await Projects.IsMemberAsync(ProjectId, userId, default))
+        {
+            Nav.NavigateTo("/projects?denied=1");
+            return;
+        }
         await ReloadAsync();
         _groupName = $"tenant:{Tenant.Current.Value:N}:project:{ProjectId:N}";
         _subscription = EventStream.Subscribe(_groupName, HandleEventAsync);

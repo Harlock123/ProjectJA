@@ -3,12 +3,14 @@
 @rendermode InteractiveServer
 @using System.Security.Claims
 @using ProjectJA.Modules.Identity.Contracts
+@using ProjectJA.Modules.Projects.Contracts
 @using ProjectJA.Host.Components.Dialogs
 @inject AppDbContext Db
 @inject IClock Clock
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider Auth
 @inject IUserQueries Users
+@inject IProjectQueries Projects
 @inject IDialogService DialogService
 
 <PageTitle>@(_project?.Name ?? "Project")</PageTitle>
@@ -24,6 +26,8 @@ else
     <MudStack Row="true" AlignItems="AlignItems.Baseline" Class="mb-4">
         <MudText Typo="Typo.h4"><span style="font-family:monospace;">@_project.Key</span> — @_project.Name</MudText>
         <MudSpacer />
+        <MudButton OnClick="OpenMembersAsync" Variant="Variant.Outlined" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Group" Class="mr-2">Membership</MudButton>
         <MudButton Href="@($"/projects/{ProjectId}/board")" Variant="Variant.Outlined" Color="Color.Primary"
                    StartIcon="@Icons.Material.Filled.ViewKanban">Board</MudButton>
     </MudStack>
@@ -162,6 +166,11 @@ else
     {
         var authState = await Auth.GetAuthenticationStateAsync();
         Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _currentUserId);
+        if (!await Projects.IsMemberAsync(ProjectId, _currentUserId, default))
+        {
+            Nav.NavigateTo("/projects?denied=1");
+            return;
+        }
         await ReloadAsync();
     }
 
@@ -178,6 +187,19 @@ else
             .OrderBy(i => i.Number)
             .ToListAsync();
         _users = await Users.ListAllAsync(default);
+    }
+
+    private async Task OpenMembersAsync()
+    {
+        var parameters = new DialogParameters<ProjectMembersDialog> { { x => x.ProjectId, ProjectId } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<ProjectMembersDialog>("Project members", parameters, options);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled) return;
+        // Membership may have changed the current user's own access — reload
+        // (the page guard re-checks on the next navigation anyway).
+        await ReloadAsync();
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task CreateAsync()

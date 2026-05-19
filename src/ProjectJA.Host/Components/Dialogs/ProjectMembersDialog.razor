@@ -1,0 +1,271 @@
+@using System.Security.Claims
+@using ProjectJA.Modules.Identity.Contracts
+@using ProjectJA.Modules.Projects.Contracts
+@using ProjectJA.Modules.Projects.Domain
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IClock Clock
+@inject IUserQueries Users
+@inject IProjectQueries Projects
+@inject AuthenticationStateProvider Auth
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            @(_loaded && _project is not null ? $"{_project.Key} — members" : "Project members")
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (!_loaded)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (_project is null)
+        {
+            <MudAlert Severity="Severity.Error">Project not found.</MudAlert>
+        }
+        else
+        {
+            <MudStack Spacing="3" Style="min-width:30rem;">
+                @if (!_isAdmin)
+                {
+                    <MudAlert Severity="Severity.Info" Dense="true">
+                        Only project Admins can change membership.
+                    </MudAlert>
+                }
+
+                @if (_members.Count == 0)
+                {
+                    <MudText Color="Color.Default">No members.</MudText>
+                }
+                else
+                {
+                    <MudTable Items="_members" Hover="true" Dense="true">
+                        <HeaderContent>
+                            <MudTh>User</MudTh>
+                            <MudTh Style="width:9rem;">Role</MudTh>
+                            <MudTh Style="width:8rem;">Added</MudTh>
+                            <MudTh Style="width:3rem;"></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@MemberName(context.UserId)</MudTd>
+                            <MudTd>
+                                @if (_isAdmin)
+                                {
+                                    <MudSelect T="ProjectRole" Value="context.Role" Dense="true"
+                                               Variant="Variant.Outlined" Margin="Margin.Dense"
+                                               ValueChanged="@(r => ChangeRoleAsync(context.UserId, r))">
+                                        @foreach (var r in Enum.GetValues<ProjectRole>())
+                                        {
+                                            <MudSelectItem Value="r">@r</MudSelectItem>
+                                        }
+                                    </MudSelect>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.body2">@context.Role</MudText>
+                                }
+                            </MudTd>
+                            <MudTd>
+                                <MudText Typo="Typo.body2" Color="Color.Default">
+                                    @context.AddedAt.ToString("yyyy-MM-dd")
+                                </MudText>
+                            </MudTd>
+                            <MudTd>
+                                @if (_isAdmin)
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Filled.PersonRemove"
+                                                   Color="Color.Error" Size="Size.Small"
+                                                   OnClick="@(() => RemoveMemberAsync(context.UserId))" />
+                                }
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+
+                @if (_isAdmin)
+                {
+                    var available = NonMembers().ToList();
+                    <MudPaper Class="pa-3" Outlined="true">
+                        <MudText Typo="Typo.subtitle2" GutterBottom="true">Add a member</MudText>
+                        @if (available.Count == 0)
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Default">
+                                Everyone in the organization is already a member.
+                            </MudText>
+                        }
+                        else
+                        {
+                            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                                <MudSelect T="Guid?" @bind-Value="_addUserId" Label="User"
+                                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true"
+                                           Style="min-width:14rem;">
+                                    @foreach (var u in available)
+                                    {
+                                        <MudSelectItem T="Guid?" Value="@u.Id">@u.DisplayName</MudSelectItem>
+                                    }
+                                </MudSelect>
+                                <MudSelect T="ProjectRole" @bind-Value="_addRole" Label="Role"
+                                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true"
+                                           Style="min-width:9rem;">
+                                    @foreach (var r in Enum.GetValues<ProjectRole>())
+                                    {
+                                        <MudSelectItem Value="r">@r</MudSelectItem>
+                                    }
+                                </MudSelect>
+                                <MudButton OnClick="AddMemberAsync" Variant="Variant.Filled" Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.PersonAdd"
+                                           Disabled="@(_addUserId is null)">Add</MudButton>
+                            </MudStack>
+                        }
+                    </MudPaper>
+                }
+
+                @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
+            </MudStack>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private bool _loaded;
+    private bool _changed;
+    private string? _error;
+    private Guid _currentUserId;
+    private bool _isAdmin;
+    private Project? _project;
+    private Guid? _addUserId;
+    private ProjectRole _addRole = ProjectRole.Member;
+    private IReadOnlyList<UserSummary> _users = Array.Empty<UserSummary>();
+    private IReadOnlyList<ProjectMemberInfo> _members = Array.Empty<ProjectMemberInfo>();
+    // Every write uses a fresh short-lived context from the factory (isolated
+    // change tracker) — same reasoning as IssueEditDialog: reusing a shared
+    // circuit-scoped context misclassifies a newly added owned ProjectMember.
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _currentUserId);
+
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            _project = await db.Projects.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == ProjectId);
+            if (_project is not null)
+            {
+                _users = await Users.ListAllAsync(default);
+                await ReloadMembersAsync();
+                _isAdmin = await Projects.GetRoleAsync(ProjectId, _currentUserId, default) == ProjectRole.Admin;
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = $"Couldn't load members: {ex.Message}";
+        }
+        _loaded = true;
+    }
+
+    private string MemberName(Guid id) =>
+        _users.FirstOrDefault(u => u.Id == id)?.DisplayName ?? "(unknown user)";
+
+    private IEnumerable<UserSummary> NonMembers()
+    {
+        var memberIds = _members.Select(m => m.UserId).ToHashSet();
+        return _users.Where(u => !memberIds.Contains(u.Id)).OrderBy(u => u.DisplayName);
+    }
+
+    private async Task ReloadMembersAsync()
+    {
+        _members = await Projects.ListMembersAsync(ProjectId, default);
+    }
+
+    private async Task AddMemberAsync()
+    {
+        _error = null;
+        if (_addUserId is not { } uid) return;
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Projects.Include(p => p.Members)
+                .FirstOrDefaultAsync(p => p.Id == ProjectId);
+            if (tracked is null) { _error = "Project no longer exists."; return; }
+
+            var member = tracked.AddMember(uid, _addRole, Clock.UtcNow);
+            // Owned child with a domain-set key added to an already-tracked
+            // aggregate is otherwise misclassified Modified (UPDATE → 0 rows).
+            db.Entry(member).State = EntityState.Added;
+            await db.SaveChangesAsync();
+
+            _addUserId = null;
+            _addRole = ProjectRole.Member;
+            _changed = true;
+            await ReloadMembersAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task RemoveMemberAsync(Guid userId)
+    {
+        _error = null;
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Projects.Include(p => p.Members)
+                .FirstOrDefaultAsync(p => p.Id == ProjectId);
+            if (tracked is null) { _error = "Project no longer exists."; return; }
+
+            tracked.RemoveMember(userId, Clock.UtcNow);
+            await db.SaveChangesAsync();
+
+            _changed = true;
+            await ReloadMembersAsync();
+            if (userId == _currentUserId)
+                _isAdmin = await Projects.GetRoleAsync(ProjectId, _currentUserId, default) == ProjectRole.Admin;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task ChangeRoleAsync(Guid userId, ProjectRole role)
+    {
+        _error = null;
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Projects.Include(p => p.Members)
+                .FirstOrDefaultAsync(p => p.Id == ProjectId);
+            if (tracked is null) { _error = "Project no longer exists."; return; }
+
+            tracked.ChangeMemberRole(userId, role, Clock.UtcNow);
+            await db.SaveChangesAsync();
+
+            _changed = true;
+            await ReloadMembersAsync();
+            if (userId == _currentUserId)
+                _isAdmin = role == ProjectRole.Admin;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    // Return Ok if anything changed so the caller refreshes (the current user
+    // may have changed their own access); otherwise a plain cancel.
+    private void Close()
+    {
+        if (_changed) MudDialog.Close(DialogResult.Ok(ProjectId));
+        else MudDialog.Cancel();
+    }
+}
