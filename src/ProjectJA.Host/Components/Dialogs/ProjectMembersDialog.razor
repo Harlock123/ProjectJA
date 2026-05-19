@@ -2,10 +2,12 @@
 @using ProjectJA.Modules.Identity.Contracts
 @using ProjectJA.Modules.Projects.Contracts
 @using ProjectJA.Modules.Projects.Domain
+@using ProjectJA.SharedKernel.Audit
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject IClock Clock
 @inject IUserQueries Users
 @inject IProjectQueries Projects
+@inject IAuditLog Audit
 @inject AuthenticationStateProvider Auth
 
 <MudDialog>
@@ -185,6 +187,24 @@
         _members = await Projects.ListMembersAsync(ProjectId, default);
     }
 
+    // Best-effort: the membership change is already committed before this runs,
+    // so an audit failure must never surface to the admin or block the dialog.
+    // ActorId is passed explicitly — this is an interactive circuit with no
+    // HttpContext for AuditLog to read the caller from.
+    private async Task AuditAsync(string action, string summary, object detail)
+    {
+        try
+        {
+            await Audit.RecordAsync(
+                new AuditEntry(action, "Project", ProjectId.ToString(), summary, detail, _currentUserId),
+                default);
+        }
+        catch
+        {
+            // swallowed by design
+        }
+    }
+
     private async Task AddMemberAsync()
     {
         _error = null;
@@ -196,11 +216,16 @@
                 .FirstOrDefaultAsync(p => p.Id == ProjectId);
             if (tracked is null) { _error = "Project no longer exists."; return; }
 
-            var member = tracked.AddMember(uid, _addRole, Clock.UtcNow);
+            var role = _addRole;
+            var member = tracked.AddMember(uid, role, Clock.UtcNow);
             // Owned child with a domain-set key added to an already-tracked
             // aggregate is otherwise misclassified Modified (UPDATE → 0 rows).
             db.Entry(member).State = EntityState.Added;
             await db.SaveChangesAsync();
+
+            await AuditAsync("project.member.added",
+                $"Added {MemberName(uid)} to {_project?.Key} as {role}",
+                new { projectId = ProjectId, projectKey = _project?.Key, targetUserId = uid, role = role.ToString() });
 
             _addUserId = null;
             _addRole = ProjectRole.Member;
@@ -223,8 +248,13 @@
                 .FirstOrDefaultAsync(p => p.Id == ProjectId);
             if (tracked is null) { _error = "Project no longer exists."; return; }
 
+            var hadRole = _members.FirstOrDefault(m => m.UserId == userId)?.Role;
             tracked.RemoveMember(userId, Clock.UtcNow);
             await db.SaveChangesAsync();
+
+            await AuditAsync("project.member.removed",
+                $"Removed {MemberName(userId)} from {_project?.Key}",
+                new { projectId = ProjectId, projectKey = _project?.Key, targetUserId = userId, role = hadRole?.ToString() });
 
             _changed = true;
             await ReloadMembersAsync();
@@ -247,8 +277,13 @@
                 .FirstOrDefaultAsync(p => p.Id == ProjectId);
             if (tracked is null) { _error = "Project no longer exists."; return; }
 
+            var oldRole = _members.FirstOrDefault(m => m.UserId == userId)?.Role;
             tracked.ChangeMemberRole(userId, role, Clock.UtcNow);
             await db.SaveChangesAsync();
+
+            await AuditAsync("project.member.role_changed",
+                $"Changed {MemberName(userId)}'s role in {_project?.Key} from {oldRole} to {role}",
+                new { projectId = ProjectId, projectKey = _project?.Key, targetUserId = userId, oldRole = oldRole?.ToString(), role = role.ToString() });
 
             _changed = true;
             await ReloadMembersAsync();

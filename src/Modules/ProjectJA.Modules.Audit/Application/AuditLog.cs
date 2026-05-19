@@ -19,8 +19,10 @@ internal sealed class AuditLog(
     public async Task RecordAsync(AuditEntry entry, CancellationToken ct)
     {
         var ctx = http.HttpContext;
-        Guid? actorId = null;
-        if (ctx?.User is { Identity.IsAuthenticated: true })
+        // An explicit actor (interactive Blazor callers) wins; otherwise read it
+        // from the current request's auth cookie (HTTP endpoint callers).
+        Guid? actorId = entry.ActorId;
+        if (actorId is null && ctx?.User is { Identity.IsAuthenticated: true })
         {
             var claim = ctx.User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (Guid.TryParse(claim, out var parsed)) actorId = parsed;

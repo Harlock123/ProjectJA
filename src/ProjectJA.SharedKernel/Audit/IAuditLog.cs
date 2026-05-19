@@ -6,7 +6,11 @@ public sealed record AuditEntry(
     string ResourceType,
     string ResourceId,
     string Summary,
-    object? Detail = null);
+    object? Detail = null,
+    // Explicit actor. Leave null for HTTP callers (the actor is read from the
+    // request's auth cookie). Interactive Blazor circuits have no HttpContext,
+    // so they must pass the acting user here or the actor would be lost.
+    Guid? ActorId = null);
 
 public interface IAuditLog
 {
