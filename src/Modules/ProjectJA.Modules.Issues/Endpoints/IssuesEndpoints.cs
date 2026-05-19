@@ -77,19 +77,21 @@ internal static class IssuesEndpoints
             [FromServices] IProjectQueries projects,
             [FromServices] IAuditLog audit,
             [FromServices] IClock clock,
+            HttpContext http,
             CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest(new { error = "Title is required." });
+
+            var createdByClaim = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(createdByClaim, out var createdBy))
+                return Results.Unauthorized();
 
             var project = await projects.GetSummaryAsync(projectId, ct);
             if (project is null) return Results.NotFound();
 
             var number = await projects.AllocateNextIssueNumberAsync(projectId, ct);
             if (number is null) return Results.NotFound();
-
-            // TODO: resolve real CreatedById from auth context once Identity UI lands.
-            var createdBy = Guid.Empty;
 
             var issue = Issue.Create(project.Id, number.Value, req.Title, req.Description, createdBy, clock.UtcNow);
             issue.Reclassify(req.Type ?? IssueType.Task, req.Points, req.AcceptanceCriteria, clock.UtcNow);
@@ -110,10 +112,12 @@ internal static class IssuesEndpoints
                 issue.Status, issue.Type, issue.Points, issue.AcceptanceCriteria,
                 issue.AssigneeId, issue.ReporterId, issue.CreatedAt, issue.UpdatedAt));
         })
+        .RequireAuthorization()
         .WithName("CreateIssue")
         .WithSummary("Create a new issue in a project")
         .WithTags("Issues")
         .Produces<IssueDto>(StatusCodes.Status201Created)
+        .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status404NotFound)
         .ProducesValidationProblem();
 
