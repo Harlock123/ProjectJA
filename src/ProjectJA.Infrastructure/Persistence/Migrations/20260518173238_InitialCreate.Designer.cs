@@ -13,15 +13,15 @@ using ProjectJA.Infrastructure.Persistence;
 namespace ProjectJA.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260515203838_AddTenantOidcConfig")]
-    partial class AddTenantOidcConfig
+    [Migration("20260518173238_InitialCreate")]
+    partial class InitialCreate
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "9.0.4")
+                .HasAnnotation("ProductVersion", "10.0.8")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -312,6 +312,12 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                     b.Property<string>("SecurityStamp")
                         .HasColumnType("text");
 
+                    b.Property<bool>("ThemeDark")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ThemeKey")
+                        .HasColumnType("text");
+
                     b.Property<bool>("TwoFactorEnabled")
                         .HasColumnType("boolean");
 
@@ -485,6 +491,10 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("AcceptanceCriteria")
+                        .HasMaxLength(8000)
+                        .HasColumnType("character varying(8000)");
+
                     b.Property<Guid?>("AssigneeId")
                         .HasColumnType("uuid");
 
@@ -501,7 +511,13 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                     b.Property<int>("Number")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("Points")
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ReporterId")
                         .HasColumnType("uuid");
 
                     b.Property<NpgsqlTsVector>("SearchVector")
@@ -517,6 +533,9 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("character varying(300)");
 
+                    b.Property<int>("Type")
+                        .HasColumnType("integer");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -530,6 +549,8 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.HasIndex("ProjectId", "Status");
+
+                    b.HasIndex("ProjectId", "Type");
 
                     b.ToTable("issues", (string)null);
                 });

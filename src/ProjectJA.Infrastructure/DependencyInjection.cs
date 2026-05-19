@@ -64,6 +64,10 @@ public static class InfrastructureServiceCollectionExtensions
         // Modules consume the base DbContext type to avoid project-reference cycles.
         services.AddScoped<DbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
+        // Tenant-aware factory for callers needing an isolated, short-lived
+        // context instead of the shared circuit-scoped one.
+        services.AddScoped<IDbContextFactory<AppDbContext>, TenantAppDbContextFactory>();
+
         services.AddIdentityCore<ApplicationUser>(options =>
         {
             options.Password.RequiredLength = 8;

@@ -16,20 +16,23 @@ internal sealed class IssueSearch(DbContext db, IProjectQueries projects) : IIss
             return Array.Empty<IssueSearchHit>();
 
         var cap = Math.Clamp(limit, 1, 100);
-        var tsQuery = EF.Functions.PlainToTsQuery("english", query);
 
+        // EF.Functions.PlainToTsQuery must be called *inside* the query expression
+        // tree — EF Core 10 / Npgsql 10 client-evaluates (and rejects) it if it's
+        // pre-computed into a local first. Repeating the call is fine; it maps to
+        // the same plainto_tsquery() SQL each time.
         var rows = await db.Set<Issue>()
             .AsNoTracking()
             .Where(i => EF.Property<NpgsqlTsVector>(i, IssueConfiguration.SearchVectorShadowProperty)
-                        .Matches(tsQuery))
+                        .Matches(EF.Functions.PlainToTsQuery("english", query)))
             .OrderByDescending(i => EF.Property<NpgsqlTsVector>(i, IssueConfiguration.SearchVectorShadowProperty)
-                        .Rank(tsQuery))
+                        .Rank(EF.Functions.PlainToTsQuery("english", query)))
             .Take(cap)
             .Select(i => new
             {
                 i.Id, i.ProjectId, i.Number, i.Title, i.Description, i.Status,
                 Rank = (double)EF.Property<NpgsqlTsVector>(i, IssueConfiguration.SearchVectorShadowProperty)
-                            .Rank(tsQuery)
+                            .Rank(EF.Functions.PlainToTsQuery("english", query))
             })
             .ToListAsync(ct);
 

@@ -1,6 +1,7 @@
 ﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
+using NpgsqlTypes;
 
 #nullable disable
 
@@ -35,6 +36,8 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                     LastName = table.Column<string>(type: "text", nullable: false),
                     OrganizationId = table.Column<Guid>(type: "uuid", nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    ThemeKey = table.Column<string>(type: "text", nullable: true),
+                    ThemeDark = table.Column<bool>(type: "boolean", nullable: false),
                     UserName = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: true),
                     NormalizedUserName = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: true),
                     Email = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: true),
@@ -56,6 +59,82 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "audit_events",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    TenantId = table.Column<Guid>(type: "uuid", nullable: false),
+                    ActorId = table.Column<Guid>(type: "uuid", nullable: true),
+                    OccurredAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    Action = table.Column<string>(type: "character varying(80)", maxLength: 80, nullable: false),
+                    ResourceType = table.Column<string>(type: "character varying(80)", maxLength: 80, nullable: false),
+                    ResourceId = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
+                    Summary = table.Column<string>(type: "character varying(400)", maxLength: 400, nullable: false),
+                    Detail = table.Column<string>(type: "jsonb", nullable: true),
+                    IpAddress = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: true),
+                    UserAgent = table.Column<string>(type: "character varying(400)", maxLength: 400, nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_audit_events", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "email_outbox",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    ScheduledFor = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    Attempts = table.Column<int>(type: "integer", nullable: false),
+                    LastAttemptAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    LastError = table.Column<string>(type: "character varying(2000)", maxLength: 2000, nullable: true),
+                    SentAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    DeadLetterAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    Payload = table.Column<string>(type: "jsonb", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_email_outbox", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "invites",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    OrganizationId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Email = table.Column<string>(type: "character varying(254)", maxLength: 254, nullable: false),
+                    TokenHash = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
+                    CreatedById = table.Column<Guid>(type: "uuid", nullable: false),
+                    CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    ExpiresAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    AcceptedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_invites", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "issue_attachments",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    IssueId = table.Column<Guid>(type: "uuid", nullable: false),
+                    FileName = table.Column<string>(type: "character varying(400)", maxLength: 400, nullable: false),
+                    ContentType = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
+                    SizeBytes = table.Column<long>(type: "bigint", nullable: false),
+                    StorageKey = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: false),
+                    UploadedBy = table.Column<Guid>(type: "uuid", nullable: false),
+                    UploadedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_issue_attachments", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "issues",
                 columns: table => new
                 {
@@ -65,10 +144,15 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                     Title = table.Column<string>(type: "character varying(300)", maxLength: 300, nullable: false),
                     Description = table.Column<string>(type: "character varying(8000)", maxLength: 8000, nullable: true),
                     Status = table.Column<int>(type: "integer", nullable: false),
+                    Type = table.Column<int>(type: "integer", nullable: false),
+                    Points = table.Column<int>(type: "integer", nullable: true),
+                    AcceptanceCriteria = table.Column<string>(type: "character varying(8000)", maxLength: 8000, nullable: true),
                     AssigneeId = table.Column<Guid>(type: "uuid", nullable: true),
+                    ReporterId = table.Column<Guid>(type: "uuid", nullable: false),
                     CreatedById = table.Column<Guid>(type: "uuid", nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
-                    UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
+                    UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    SearchVector = table.Column<NpgsqlTsVector>(type: "tsvector", nullable: true, computedColumnSql: "setweight(to_tsvector('english', coalesce(\"Title\", '')), 'A') || setweight(to_tsvector('english', coalesce(\"Description\", '')), 'B')", stored: true)
                 },
                 constraints: table =>
                 {
@@ -104,6 +188,25 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_projects", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "tenant_oidc_config",
+                columns: table => new
+                {
+                    Id = table.Column<int>(type: "integer", nullable: false),
+                    Enabled = table.Column<bool>(type: "boolean", nullable: false),
+                    DisplayName = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
+                    Authority = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
+                    ClientId = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: true),
+                    ClientSecret = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
+                    AutoProvision = table.Column<bool>(type: "boolean", nullable: false),
+                    AutoProvisionDomainsJson = table.Column<string>(type: "jsonb", nullable: false),
+                    UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_tenant_oidc_config", x => x.Id);
                 });
 
             migrationBuilder.CreateTable(
@@ -271,6 +374,42 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
+                name: "IX_audit_events_ActorId",
+                table: "audit_events",
+                column: "ActorId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_audit_events_OccurredAt",
+                table: "audit_events",
+                column: "OccurredAt");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_audit_events_ResourceType_ResourceId",
+                table: "audit_events",
+                columns: new[] { "ResourceType", "ResourceId" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_email_outbox_SentAt_DeadLetterAt_ScheduledFor",
+                table: "email_outbox",
+                columns: new[] { "SentAt", "DeadLetterAt", "ScheduledFor" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_invites_OrganizationId_Email_AcceptedAt",
+                table: "invites",
+                columns: new[] { "OrganizationId", "Email", "AcceptedAt" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_invites_TokenHash",
+                table: "invites",
+                column: "TokenHash",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_issue_attachments_IssueId",
+                table: "issue_attachments",
+                column: "IssueId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_issue_comments_IssueId",
                 table: "issue_comments",
                 column: "IssueId");
@@ -285,6 +424,17 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                 name: "IX_issues_ProjectId_Status",
                 table: "issues",
                 columns: new[] { "ProjectId", "Status" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_issues_ProjectId_Type",
+                table: "issues",
+                columns: new[] { "ProjectId", "Type" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_issues_SearchVector",
+                table: "issues",
+                column: "SearchVector")
+                .Annotation("Npgsql:IndexMethod", "gin");
 
             migrationBuilder.CreateIndex(
                 name: "IX_organizations_Slug",
@@ -318,6 +468,18 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                 name: "aspnetusertokens");
 
             migrationBuilder.DropTable(
+                name: "audit_events");
+
+            migrationBuilder.DropTable(
+                name: "email_outbox");
+
+            migrationBuilder.DropTable(
+                name: "invites");
+
+            migrationBuilder.DropTable(
+                name: "issue_attachments");
+
+            migrationBuilder.DropTable(
                 name: "issue_comments");
 
             migrationBuilder.DropTable(
@@ -325,6 +487,9 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
 
             migrationBuilder.DropTable(
                 name: "projects");
+
+            migrationBuilder.DropTable(
+                name: "tenant_oidc_config");
 
             migrationBuilder.DropTable(
                 name: "aspnetroles");

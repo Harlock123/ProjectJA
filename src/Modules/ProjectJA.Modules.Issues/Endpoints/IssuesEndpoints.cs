@@ -214,6 +214,10 @@ internal static class IssuesEndpoints
             if (issue is null) return Results.NotFound();
 
             var comment = issue.AddComment(req.AuthorId, req.Body, clock.UtcNow);
+            // Comment has a domain-assigned Guid key, so EF's "key is set ⇒
+            // existing" heuristic would emit UPDATE (0 rows) instead of INSERT.
+            // Force the new owned child to Added.
+            db.Entry(comment).State = EntityState.Added;
             await db.SaveChangesAsync(ct);
             return Results.Created($"/api/issues/{id}/comments/{comment.Id}", new { comment.Id });
         })
