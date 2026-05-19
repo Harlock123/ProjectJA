@@ -52,7 +52,8 @@ builder.Host.UseSerilog((ctx, sp, logger) =>
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options =>
+    options.AddDocumentTransformer<ProjectJA.Host.OpenApi.SecuritySchemeDocumentTransformer>());
 
 // OpenTelemetry: traces + metrics. OTLP export is wired only when configured.
 var otlpEndpoint = builder.Configuration["OpenTelemetry:Otlp:Endpoint"];
