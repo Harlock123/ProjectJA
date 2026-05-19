@@ -3,11 +3,13 @@
 @rendermode InteractiveServer
 @using System.Security.Claims
 @using ProjectJA.Modules.Identity.Contracts
+@using ProjectJA.Host.Components.Dialogs
 @inject AppDbContext Db
 @inject IClock Clock
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider Auth
 @inject IUserQueries Users
+@inject IDialogService DialogService
 
 <PageTitle>@(_project?.Name ?? "Project")</PageTitle>
 
@@ -52,12 +54,14 @@ else
                             <MudTh Style="width:5rem;">Pts</MudTh>
                             <MudTh>Status</MudTh>
                             <MudTh>Updated</MudTh>
+                            <MudTh Style="width:3rem;"></MudTh>
                         </HeaderContent>
                         <RowTemplate>
                             <MudTd><MudLink Href="@($"/issues/{context.Id}")" Style="font-family:monospace;">@_project.Key-@context.Number</MudLink></MudTd>
                             <MudTd><MudChip T="string" Size="Size.Small" Color="@TypeColor(context.Type)" Variant="Variant.Outlined">@context.Type</MudChip></MudTd>
                             <MudTd><MudChip T="string" Size="Size.Small" Color="@PriorityColor(context.Priority)">@context.Priority</MudChip></MudTd>
-                            <MudTd>
+                            <MudTd style="cursor:pointer;" title="Double-click to edit"
+                                   @ondblclick="@(() => OpenEditAsync(context.Id))">
                                 @context.Title
                                 @if (context.Labels.Count > 0)
                                 {
@@ -78,6 +82,11 @@ else
                                 </MudSelect>
                             </MudTd>
                             <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@context.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</MudText></MudTd>
+                            <MudTd>
+                                <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                                               Color="Color.Primary" title="Edit issue"
+                                               OnClick="@(() => OpenEditAsync(context.Id))" />
+                            </MudTd>
                         </RowTemplate>
                     </MudTable>
                 }
@@ -204,6 +213,20 @@ else
         tracked.Transition(newStatus, Clock.UtcNow);
         await Db.SaveChangesAsync();
         await ReloadAsync();
+    }
+
+    // Same modal the board opens on double-click. On save, reload the list so
+    // the row reflects the edit.
+    private async Task OpenEditAsync(Guid issueId)
+    {
+        var parameters = new DialogParameters<IssueEditDialog> { { x => x.IssueId, issueId } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<IssueEditDialog>("Edit issue", parameters, options);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled) return;
+
+        await ReloadAsync();
+        await InvokeAsync(StateHasChanged);
     }
 
     private static IEnumerable<string> SplitLabels(string? csv) =>
