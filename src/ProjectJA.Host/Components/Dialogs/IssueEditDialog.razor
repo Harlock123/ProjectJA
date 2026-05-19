@@ -1,11 +1,14 @@
 @using System.Security.Claims
 @using ProjectJA.Modules.Identity.Contracts
 @using ProjectJA.Modules.Issues.Contracts
+@using ProjectJA.Modules.Projects.Contracts
+@using ProjectJA.Modules.Projects.Domain
 @using ProjectJA.Host.Hubs
 @using ProjectJA.SharedKernel.Realtime
 @using ProjectJA.SharedKernel.Tenancy
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject IClock Clock
+@inject IProjectQueries Projects
 @inject IUserQueries Users
 @inject IAttachmentService Attachments
 @inject AuthenticationStateProvider Auth
@@ -35,35 +38,41 @@
             <MudTabs Elevation="0" Rounded="true" KeepPanelsAlive="true" Style="min-width:34rem;">
                 <MudTabPanel Text="Details">
                     <MudStack Spacing="3" Class="pt-3">
-                        <MudTextField Label="Title" @bind-Value="_edit.Title"
+                        @if (!_canWrite)
+                        {
+                            <MudAlert Severity="Severity.Info" Dense="true">
+                                Read-only access — you can view this issue but not change it.
+                            </MudAlert>
+                        }
+                        <MudTextField Label="Title" @bind-Value="_edit.Title" ReadOnly="@(!_canWrite)"
                                       Variant="Variant.Outlined" Required="true" MaxLength="300" />
                         <MudStack Row="true" Spacing="2">
-                            <MudSelect T="IssueType" Label="Type" @bind-Value="_edit.Type"
+                            <MudSelect T="IssueType" Label="Type" @bind-Value="_edit.Type" ReadOnly="@(!_canWrite)"
                                        Variant="Variant.Outlined" Dense="true">
                                 @foreach (var t in Enum.GetValues<IssueType>())
                                 {
                                     <MudSelectItem Value="t">@t</MudSelectItem>
                                 }
                             </MudSelect>
-                            <MudSelect T="IssueStatus" Label="Status" @bind-Value="_edit.Status"
+                            <MudSelect T="IssueStatus" Label="Status" @bind-Value="_edit.Status" ReadOnly="@(!_canWrite)"
                                        Variant="Variant.Outlined" Dense="true">
                                 @foreach (var s in Enum.GetValues<IssueStatus>())
                                 {
                                     <MudSelectItem Value="s">@s</MudSelectItem>
                                 }
                             </MudSelect>
-                            <MudNumericField T="int?" Label="Points" @bind-Value="_edit.Points"
+                            <MudNumericField T="int?" Label="Points" @bind-Value="_edit.Points" ReadOnly="@(!_canWrite)"
                                              Variant="Variant.Outlined" Min="0" Max="100" />
                         </MudStack>
                         <MudStack Row="true" Spacing="2">
-                            <MudSelect T="Guid?" Label="Assignee" @bind-Value="_edit.AssigneeId"
+                            <MudSelect T="Guid?" Label="Assignee" @bind-Value="_edit.AssigneeId" ReadOnly="@(!_canWrite)"
                                        Variant="Variant.Outlined" Dense="true" Clearable="true">
                                 @foreach (var u in _users)
                                 {
                                     <MudSelectItem T="Guid?" Value="@u.Id">@u.DisplayName</MudSelectItem>
                                 }
                             </MudSelect>
-                            <MudSelect T="Guid" Label="Reporter" @bind-Value="_edit.ReporterId"
+                            <MudSelect T="Guid" Label="Reporter" @bind-Value="_edit.ReporterId" ReadOnly="@(!_canWrite)"
                                        Variant="Variant.Outlined" Dense="true">
                                 @foreach (var u in _users)
                                 {
@@ -72,22 +81,22 @@
                             </MudSelect>
                         </MudStack>
                         <MudStack Row="true" Spacing="2">
-                            <MudSelect T="IssuePriority" Label="Priority" @bind-Value="_edit.Priority"
+                            <MudSelect T="IssuePriority" Label="Priority" @bind-Value="_edit.Priority" ReadOnly="@(!_canWrite)"
                                        Variant="Variant.Outlined" Dense="true">
                                 @foreach (var p in Enum.GetValues<IssuePriority>())
                                 {
                                     <MudSelectItem Value="p">@p</MudSelectItem>
                                 }
                             </MudSelect>
-                            <MudTextField Label="Labels" @bind-Value="_edit.Labels"
+                            <MudTextField Label="Labels" @bind-Value="_edit.Labels" ReadOnly="@(!_canWrite)"
                                           Placeholder="comma-separated"
                                           HelperText="Free-text tags, comma-separated."
                                           Variant="Variant.Outlined" />
                         </MudStack>
-                        <MudTextField Label="Description" @bind-Value="_edit.Description"
+                        <MudTextField Label="Description" @bind-Value="_edit.Description" ReadOnly="@(!_canWrite)"
                                       Variant="Variant.Outlined" Lines="3" />
                         <MudTextField Label="Acceptance Criteria / Definition of Done"
-                                      @bind-Value="_edit.AcceptanceCriteria"
+                                      @bind-Value="_edit.AcceptanceCriteria" ReadOnly="@(!_canWrite)"
                                       Variant="Variant.Outlined" Lines="3" />
                         @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
                     </MudStack>
@@ -95,7 +104,10 @@
 
                 <MudTabPanel Text="@($"Attachments ({_attachments?.Count ?? 0})")">
                     <MudStack Spacing="2" Class="pt-3">
-                        <input type="file" id="@_uploadInputId" />
+                        @if (_canWrite)
+                        {
+                            <input type="file" id="@_uploadInputId" />
+                        }
                         @if (_attachError is not null) { <MudAlert Severity="Severity.Error">@_attachError</MudAlert> }
                         @if (_attachments is null)
                         {
@@ -123,8 +135,11 @@
                                     <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@FormatSize(context.SizeBytes)</MudText></MudTd>
                                     <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@context.UploadedAt.ToString("yyyy-MM-dd HH:mm")</MudText></MudTd>
                                     <MudTd>
-                                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
-                                                       OnClick="@(() => DeleteAttachmentAsync(context.Id))" />
+                                        @if (_canWrite)
+                                        {
+                                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                                                           OnClick="@(() => DeleteAttachmentAsync(context.Id))" />
+                                        }
                                     </MudTd>
                                 </RowTemplate>
                             </MudTable>
@@ -144,7 +159,7 @@
                                 <MudStack Spacing="2">
                                     @foreach (var c in _comments)
                                     {
-                                        var mine = c.AuthorId == _currentUserId;
+                                        var mine = _canWrite && c.AuthorId == _currentUserId;
                                         <MudPaper @key="c.Id" Class="pa-2" Outlined="true"
                                                   Style="@(mine && _editingCommentId != c.Id ? "cursor:pointer;" : null)"
                                                   title="@(mine && _editingCommentId != c.Id ? "Double-click to edit or delete" : null)"
@@ -176,15 +191,18 @@
                                 </MudStack>
                             </div>
                         }
-                        <MudTextField @bind-Value="_newComment" Label="Add a comment"
-                                      Variant="Variant.Outlined" Lines="3" MaxLength="8000"
-                                      Immediate="true" />
-                        @if (_commentError is not null) { <MudAlert Severity="Severity.Error">@_commentError</MudAlert> }
-                        <div>
-                            <MudButton OnClick="AddCommentAsync" Variant="Variant.Filled" Color="Color.Primary"
-                                       StartIcon="@Icons.Material.Filled.Send"
-                                       Disabled="@string.IsNullOrWhiteSpace(_newComment)">Comment</MudButton>
-                        </div>
+                        @if (_canWrite)
+                        {
+                            <MudTextField @bind-Value="_newComment" Label="Add a comment"
+                                          Variant="Variant.Outlined" Lines="3" MaxLength="8000"
+                                          Immediate="true" />
+                            @if (_commentError is not null) { <MudAlert Severity="Severity.Error">@_commentError</MudAlert> }
+                            <div>
+                                <MudButton OnClick="AddCommentAsync" Variant="Variant.Filled" Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.Send"
+                                           Disabled="@string.IsNullOrWhiteSpace(_newComment)">Comment</MudButton>
+                            </div>
+                        }
                     </MudStack>
                 </MudTabPanel>
             </MudTabs>
@@ -192,8 +210,11 @@
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">Close</MudButton>
-        <MudButton Color="Color.Primary" Variant="Variant.Filled"
-                   OnClick="SaveAsync" Disabled="@(!_loaded || _issue is null)">Save details</MudButton>
+        @if (_canWrite)
+        {
+            <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                       OnClick="SaveAsync" Disabled="@(!_loaded || _issue is null)">Save details</MudButton>
+        }
     </DialogActions>
 </MudDialog>
 
@@ -204,6 +225,7 @@
     private bool _loaded;
     private bool _jsInited;
     private bool _changed;
+    private bool _canWrite;
     private Issue? _issue;
     private string? _projectKey;
     private string? _error;
@@ -247,6 +269,8 @@
                 var project = await db.Projects.AsNoTracking()
                     .FirstOrDefaultAsync(p => p.Id == _issue.ProjectId);
                 _projectKey = project?.Key ?? "?";
+                var role = await Projects.GetRoleAsync(_issue.ProjectId, _currentUserId, default);
+                _canWrite = role?.CanWrite() == true;
                 _users = await Users.ListAllAsync(default);
                 _userNames = _users.ToDictionary(u => u.Id, u => u.DisplayName);
                 _comments = _issue.Comments.OrderByDescending(c => c.CreatedAt).ToList();
@@ -306,7 +330,8 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (_jsInited || !_loaded || _issue is null) return;
+        // Viewers don't get the upload input rendered — nothing to bind.
+        if (_jsInited || !_loaded || _issue is null || !_canWrite) return;
         _jsInited = true;
         _selfRef = DotNetObjectReference.Create(this);
         // Panels are kept alive, so the file input is in the DOM even when the
@@ -320,6 +345,11 @@
     private async Task SaveAsync()
     {
         _error = null;
+        if (!_canWrite)
+        {
+            _error = "Read-only access: only Members and Admins can edit issues.";
+            return;
+        }
         if (string.IsNullOrWhiteSpace(_edit.Title))
         {
             _error = "Title is required.";
@@ -367,6 +397,11 @@
     private async Task AddCommentAsync()
     {
         _commentError = null;
+        if (!_canWrite)
+        {
+            _commentError = "Read-only access: only Members and Admins can comment.";
+            return;
+        }
         if (string.IsNullOrWhiteSpace(_newComment)) return;
         if (_currentUserId == Guid.Empty)
         {
@@ -407,7 +442,7 @@
     private void OnCommentDblClick(Comment c)
     {
         // Author-only; the domain enforces this again on save/delete.
-        if (c.AuthorId != _currentUserId) return;
+        if (!_canWrite || c.AuthorId != _currentUserId) return;
         _commentError = null;
         _editingCommentId = c.Id;
         _editBody = c.Body;
@@ -421,7 +456,7 @@
 
     private async Task SaveEditCommentAsync()
     {
-        if (_editingCommentId is not { } id || string.IsNullOrWhiteSpace(_editBody)) return;
+        if (!_canWrite || _editingCommentId is not { } id || string.IsNullOrWhiteSpace(_editBody)) return;
         _commentError = null;
         try
         {
@@ -449,6 +484,7 @@
 
     private async Task DeleteCommentAsync(Guid commentId)
     {
+        if (!_canWrite) return;
         _commentError = null;
         try
         {
@@ -540,6 +576,7 @@
 
     private async Task DeleteAttachmentAsync(Guid attachmentId)
     {
+        if (!_canWrite) return;
         try
         {
             if (await Attachments.DeleteAsync(attachmentId, default))

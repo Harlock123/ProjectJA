@@ -5,6 +5,7 @@
 @using ProjectJA.Modules.Issues.Contracts
 @using ProjectJA.Modules.Identity.Contracts
 @using ProjectJA.Modules.Projects.Contracts
+@using ProjectJA.Modules.Projects.Domain
 @inject AppDbContext Db
 @inject IClock Clock
 @inject IAttachmentService Attachments
@@ -33,13 +34,19 @@ else
     </MudText>
     <MudPaper Class="pa-4 mb-4" Elevation="1">
         <MudText Typo="Typo.h6" GutterBottom="true">Details</MudText>
+        @if (!_canWrite)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
+                You have read-only access to this project — fields can't be edited.
+            </MudAlert>
+        }
         <MudGrid Spacing="3">
             <MudItem xs="12">
-                <MudTextField Label="Title" @bind-Value="_edit.Title"
+                <MudTextField Label="Title" @bind-Value="_edit.Title" ReadOnly="@(!_canWrite)"
                               Variant="Variant.Outlined" Required="true" MaxLength="300" />
             </MudItem>
             <MudItem xs="12" sm="4">
-                <MudSelect T="IssueType" Label="Type" @bind-Value="_edit.Type"
+                <MudSelect T="IssueType" Label="Type" @bind-Value="_edit.Type" ReadOnly="@(!_canWrite)"
                            Variant="Variant.Outlined" Dense="true">
                     @foreach (var t in Enum.GetValues<IssueType>())
                     {
@@ -48,7 +55,7 @@ else
                 </MudSelect>
             </MudItem>
             <MudItem xs="12" sm="4">
-                <MudNumericField T="int?" Label="Points" @bind-Value="_edit.Points"
+                <MudNumericField T="int?" Label="Points" @bind-Value="_edit.Points" ReadOnly="@(!_canWrite)"
                                  Variant="Variant.Outlined" Min="0" Max="100" />
             </MudItem>
             <MudItem xs="12" sm="4">
@@ -57,7 +64,7 @@ else
                               HelperText="Change status on the board or project list." />
             </MudItem>
             <MudItem xs="12" sm="6">
-                <MudSelect T="Guid?" Label="Assignee" @bind-Value="_edit.AssigneeId"
+                <MudSelect T="Guid?" Label="Assignee" @bind-Value="_edit.AssigneeId" ReadOnly="@(!_canWrite)"
                            Variant="Variant.Outlined" Dense="true" Clearable="true">
                     @foreach (var u in _users)
                     {
@@ -66,7 +73,7 @@ else
                 </MudSelect>
             </MudItem>
             <MudItem xs="12" sm="6">
-                <MudSelect T="Guid" Label="Reporter" @bind-Value="_edit.ReporterId"
+                <MudSelect T="Guid" Label="Reporter" @bind-Value="_edit.ReporterId" ReadOnly="@(!_canWrite)"
                            Variant="Variant.Outlined" Dense="true">
                     @foreach (var u in _users)
                     {
@@ -75,19 +82,22 @@ else
                 </MudSelect>
             </MudItem>
             <MudItem xs="12">
-                <MudTextField Label="Description" @bind-Value="_edit.Description"
+                <MudTextField Label="Description" @bind-Value="_edit.Description" ReadOnly="@(!_canWrite)"
                               Variant="Variant.Outlined" Lines="4" />
             </MudItem>
             <MudItem xs="12">
                 <MudTextField Label="Acceptance Criteria / Definition of Done"
-                              @bind-Value="_edit.AcceptanceCriteria"
+                              @bind-Value="_edit.AcceptanceCriteria" ReadOnly="@(!_canWrite)"
                               Variant="Variant.Outlined" Lines="4"
                               HelperText="What must be true for this work to be considered done." />
             </MudItem>
         </MudGrid>
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3" Class="mt-3">
-            <MudButton OnClick="SaveAsync" Variant="Variant.Filled" Color="Color.Primary"
-                       StartIcon="@Icons.Material.Filled.Save">Save details</MudButton>
+            @if (_canWrite)
+            {
+                <MudButton OnClick="SaveAsync" Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Save">Save details</MudButton>
+            }
             <MudText Typo="Typo.caption" Color="Color.Default">
                 Created by @CreatorName • @_issue.CreatedAt.ToString("yyyy-MM-dd HH:mm")
             </MudText>
@@ -98,9 +108,12 @@ else
     <MudPaper Class="pa-4" Elevation="1">
         <MudText Typo="Typo.h6" GutterBottom="true">Attachments</MudText>
 
-        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
-            <input type="file" id="upload-input" />
-        </MudStack>
+        @if (_canWrite)
+        {
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+                <input type="file" id="upload-input" />
+            </MudStack>
+        }
         @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mb-3">@_error</MudAlert> }
 
         @if (_attachments is null)
@@ -129,8 +142,11 @@ else
                     <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@FormatSize(context.SizeBytes)</MudText></MudTd>
                     <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@context.UploadedAt.ToString("yyyy-MM-dd HH:mm")</MudText></MudTd>
                     <MudTd>
-                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
-                                       OnClick="@(() => DeleteAsync(context.Id))" />
+                        @if (_canWrite)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                                           OnClick="@(() => DeleteAsync(context.Id))" />
+                        }
                     </MudTd>
                 </RowTemplate>
             </MudTable>
@@ -146,6 +162,7 @@ else
     private List<AttachmentSummary>? _attachments;
     private string? _error;
     private string? _saveError;
+    private bool _canWrite;
     private DotNetObjectReference<IssueDetail>? _selfRef;
 
     private IReadOnlyList<UserSummary> _users = Array.Empty<UserSummary>();
@@ -163,17 +180,20 @@ else
             .Where(i => i.Id == IssueId)
             .Select(i => (Guid?)i.ProjectId)
             .FirstOrDefaultAsync();
-        if (projectId is null || !await Projects.IsMemberAsync(projectId.Value, userId, default))
+        var role = projectId is null ? null : await Projects.GetRoleAsync(projectId.Value, userId, default);
+        if (role is null)
         {
             Nav.NavigateTo("/projects?denied=1");
             return;
         }
+        _canWrite = role.Value.CanWrite();
         await ReloadAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender && _issue is not null)
+        // Only Members+ get the upload input rendered, so only then bind it.
+        if (firstRender && _issue is not null && _canWrite)
         {
             _selfRef = DotNetObjectReference.Create(this);
             await JS.InvokeVoidAsync("projectja.uploads.init", _selfRef, "upload-input", IssueId);
@@ -209,6 +229,11 @@ else
     private async Task SaveAsync()
     {
         _saveError = null;
+        if (!_canWrite)
+        {
+            _saveError = "Read-only access: only Members and Admins can edit issues.";
+            return;
+        }
         if (string.IsNullOrWhiteSpace(_edit.Title))
         {
             _saveError = "Title is required.";
@@ -268,6 +293,7 @@ else
 
     private async Task DeleteAsync(Guid attachmentId)
     {
+        if (!_canWrite) return;
         if (await Attachments.DeleteAsync(attachmentId, default))
             await ReloadAsync();
     }

@@ -7,6 +7,7 @@
 @using ProjectJA.SharedKernel.Tenancy
 @using System.Security.Claims
 @using ProjectJA.Modules.Projects.Contracts
+@using ProjectJA.Modules.Projects.Domain
 @inject AppDbContext Db
 @inject IClock Clock
 @inject ITenantContext Tenant
@@ -45,11 +46,11 @@ else
 
                     @foreach (var issue in IssuesIn(col))
                     {
-                        <div draggable="true"
+                        <div draggable="@(_canWrite ? "true" : "false")"
                              data-issue-id="@issue.Id"
                              @key="issue.Id"
                              class="board-card"
-                             title="Double-click to edit"
+                             title="@(_canWrite ? "Drag to move · double-click to edit" : "Double-click to view")"
                              @ondblclick="@(() => OpenEditAsync(issue.Id))"
                              style="@($"cursor:grab;background:{CardBackground()};border:1px solid {CardBorder()};border-radius:4px;padding:0.5rem 0.75rem;margin-bottom:0.5rem;")">
                             <div style="@($"font-family:monospace;font-size:0.75rem;color:{CardKeyColor()};")">@_project.Key-@issue.Number</div>
@@ -89,6 +90,7 @@ else
     private static readonly IssueStatus[] Columns = [IssueStatus.Todo, IssueStatus.Doing, IssueStatus.Done];
 
     private Project? _project;
+    private bool _canWrite;
     private List<Issue> _issues = new();
     private IDisposable? _subscription;
     private DotNetObjectReference<Board>? _selfRef;
@@ -98,11 +100,13 @@ else
     {
         var authState = await Auth.GetAuthenticationStateAsync();
         Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId);
-        if (!await Projects.IsMemberAsync(ProjectId, userId, default))
+        var role = await Projects.GetRoleAsync(ProjectId, userId, default);
+        if (role is null)
         {
             Nav.NavigateTo("/projects?denied=1");
             return;
         }
+        _canWrite = role.Value.CanWrite();
         await ReloadAsync();
         _groupName = $"tenant:{Tenant.Current.Value:N}:project:{ProjectId:N}";
         _subscription = EventStream.Subscribe(_groupName, HandleEventAsync);
@@ -179,6 +183,9 @@ else
     [JSInvokable]
     public async Task OnCardDropped(string issueId, int statusInt)
     {
+        // Defense-in-depth: cards aren't draggable for Viewers, but a tampered
+        // client could still invoke this. The API PATCH also re-checks the role.
+        if (!_canWrite) return;
         if (!Guid.TryParse(issueId, out var id)) return;
         if (!Enum.IsDefined(typeof(IssueStatus), statusInt)) return;
         var target = (IssueStatus)statusInt;

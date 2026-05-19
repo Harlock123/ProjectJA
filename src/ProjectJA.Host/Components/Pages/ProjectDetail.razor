@@ -4,6 +4,7 @@
 @using System.Security.Claims
 @using ProjectJA.Modules.Identity.Contracts
 @using ProjectJA.Modules.Projects.Contracts
+@using ProjectJA.Modules.Projects.Domain
 @using ProjectJA.Host.Components.Dialogs
 @inject AppDbContext Db
 @inject IClock Clock
@@ -79,16 +80,24 @@ else
                             </MudTd>
                             <MudTd>@(context.Points?.ToString() ?? "—")</MudTd>
                             <MudTd>
-                                <MudSelect T="IssueStatus" Value="context.Status" ValueChanged="@(v => TransitionAsync(context, v))" Dense="true" Margin="Margin.Dense">
-                                    <MudSelectItem Value="IssueStatus.Todo">Todo</MudSelectItem>
-                                    <MudSelectItem Value="IssueStatus.Doing">Doing</MudSelectItem>
-                                    <MudSelectItem Value="IssueStatus.Done">Done</MudSelectItem>
-                                </MudSelect>
+                                @if (_canWrite)
+                                {
+                                    <MudSelect T="IssueStatus" Value="context.Status" ValueChanged="@(v => TransitionAsync(context, v))" Dense="true" Margin="Margin.Dense">
+                                        <MudSelectItem Value="IssueStatus.Todo">Todo</MudSelectItem>
+                                        <MudSelectItem Value="IssueStatus.Doing">Doing</MudSelectItem>
+                                        <MudSelectItem Value="IssueStatus.Done">Done</MudSelectItem>
+                                    </MudSelect>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.body2">@context.Status</MudText>
+                                }
                             </MudTd>
                             <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@context.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</MudText></MudTd>
                             <MudTd>
-                                <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
-                                               Color="Color.Primary" title="Edit issue"
+                                <MudIconButton Icon="@(_canWrite ? Icons.Material.Filled.Edit : Icons.Material.Filled.Visibility)"
+                                               Size="Size.Small" Color="Color.Primary"
+                                               title="@(_canWrite ? "Edit issue" : "View issue")"
                                                OnClick="@(() => OpenEditAsync(context.Id))" />
                             </MudTd>
                         </RowTemplate>
@@ -99,6 +108,16 @@ else
 
         <MudItem xs="12" md="4">
             <MudPaper Class="pa-4" Elevation="1">
+                @if (!_canWrite)
+                {
+                    <MudText Typo="Typo.h6" GutterBottom="true">Issues</MudText>
+                    <MudAlert Severity="Severity.Info" Dense="true">
+                        You have <strong>read-only</strong> (@_role) access to this project.
+                        Ask a project Admin for the Member role to create or edit issues.
+                    </MudAlert>
+                }
+                else
+                {
                 <MudText Typo="Typo.h6" GutterBottom="true">Create an issue</MudText>
                 <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
                     Issues are work items in this project. The next one will be
@@ -147,6 +166,7 @@ else
                                StartIcon="@Icons.Material.Filled.Add">Create issue</MudButton>
                     @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
                 </MudStack>
+                }
             </MudPaper>
         </MudItem>
     </MudGrid>
@@ -159,6 +179,8 @@ else
     private List<Issue>? _issues;
     private IReadOnlyList<UserSummary> _users = Array.Empty<UserSummary>();
     private Guid _currentUserId;
+    private ProjectRole? _role;
+    private bool _canWrite;
     private Draft _draft = new();
     private string? _error;
 
@@ -166,11 +188,13 @@ else
     {
         var authState = await Auth.GetAuthenticationStateAsync();
         Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _currentUserId);
-        if (!await Projects.IsMemberAsync(ProjectId, _currentUserId, default))
+        _role = await Projects.GetRoleAsync(ProjectId, _currentUserId, default);
+        if (_role is null)
         {
             Nav.NavigateTo("/projects?denied=1");
             return;
         }
+        _canWrite = _role.Value.CanWrite();
         await ReloadAsync();
     }
 
@@ -206,6 +230,11 @@ else
     {
         _error = null;
         if (_project is null) return;
+        if (!_canWrite)
+        {
+            _error = "Read-only access: only Members and Admins can create issues.";
+            return;
+        }
         if (string.IsNullOrWhiteSpace(_draft.Title))
         {
             _error = "Title is required.";
@@ -231,6 +260,7 @@ else
 
     private async Task TransitionAsync(Issue issue, IssueStatus newStatus)
     {
+        if (!_canWrite) return;
         var tracked = await Db.Issues.FirstAsync(i => i.Id == issue.Id);
         tracked.Transition(newStatus, Clock.UtcNow);
         await Db.SaveChangesAsync();

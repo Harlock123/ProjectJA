@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using ProjectJA.Modules.Issues.Contracts;
 using ProjectJA.Modules.Issues.Domain;
 using ProjectJA.Modules.Projects.Contracts;
+using ProjectJA.Modules.Projects.Domain;
 using ProjectJA.SharedKernel.Audit;
 using ProjectJA.SharedKernel.Realtime;
 using ProjectJA.SharedKernel.Tenancy;
@@ -86,9 +87,9 @@ internal static class IssuesEndpoints
             if (string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest(new { error = "Title is required." });
 
-            var createdByClaim = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            if (!Guid.TryParse(createdByClaim, out var createdBy))
-                return Results.Unauthorized();
+            var auth = await ProjectAccess.RequireAsync(http, projects, projectId, ProjectRole.Member, ct);
+            if (auth.Denied) return auth.Failure!;
+            var createdBy = auth.UserId;
 
             var project = await projects.GetSummaryAsync(projectId, ct);
             if (project is null) return Results.NotFound();
@@ -120,10 +121,11 @@ internal static class IssuesEndpoints
         })
         .RequireAuthorization()
         .WithName("CreateIssue")
-        .WithSummary("Create a new issue in a project")
+        .WithSummary("Create a new issue in a project (requires Member role)")
         .WithTags("Issues")
         .Produces<IssueDto>(StatusCodes.Status201Created)
         .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound)
         .ProducesValidationProblem();
 
@@ -153,11 +155,15 @@ internal static class IssuesEndpoints
             Guid id,
             [FromBody] EditIssueRequest req,
             [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
             [FromServices] IClock clock,
+            HttpContext http,
             CancellationToken ct) =>
         {
             var issue = await db.Set<Issue>().FirstOrDefaultAsync(i => i.Id == id, ct);
             if (issue is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, issue.ProjectId, ProjectRole.Member, ct);
+            if (auth.Denied) return auth.Failure!;
             issue.Edit(req.Title, req.Description, clock.UtcNow);
             issue.Reclassify(req.Type, req.Points, req.AcceptanceCriteria, clock.UtcNow);
             issue.SetPriority(req.Priority, clock.UtcNow);
@@ -168,10 +174,13 @@ internal static class IssuesEndpoints
             await db.SaveChangesAsync(ct);
             return Results.NoContent();
         })
+        .RequireAuthorization()
         .WithName("EditIssue")
-        .WithSummary("Edit an issue's title or description")
+        .WithSummary("Edit an issue (requires Member role)")
         .WithTags("Issues")
         .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);
 
         app.MapPatch("/api/issues/{id:guid}/status", async (
@@ -182,10 +191,14 @@ internal static class IssuesEndpoints
             [FromServices] IClock clock,
             [FromServices] IRealtimeNotifier realtime,
             [FromServices] ITenantContext tenant,
+            [FromServices] IProjectQueries projects,
+            HttpContext http,
             CancellationToken ct) =>
         {
             var issue = await db.Set<Issue>().FirstOrDefaultAsync(i => i.Id == id, ct);
             if (issue is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, issue.ProjectId, ProjectRole.Member, ct);
+            if (auth.Denied) return auth.Failure!;
             var oldStatus = issue.Status;
             issue.Transition(req.Status, clock.UtcNow);
             await db.SaveChangesAsync(ct);
@@ -206,17 +219,22 @@ internal static class IssuesEndpoints
 
             return Results.NoContent();
         })
+        .RequireAuthorization()
         .WithName("TransitionIssueStatus")
-        .WithSummary("Transition an issue between Todo / Doing / Done")
+        .WithSummary("Transition an issue between Todo / Doing / Done (requires Member role)")
         .WithTags("Issues")
         .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);
 
         app.MapPost("/api/issues/{id:guid}/comments", async (
             Guid id,
             [FromBody] AddCommentRequest req,
             [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
             [FromServices] IClock clock,
+            HttpContext http,
             CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(req.Body))
@@ -224,6 +242,8 @@ internal static class IssuesEndpoints
 
             var issue = await db.Set<Issue>().Include(i => i.Comments).FirstOrDefaultAsync(i => i.Id == id, ct);
             if (issue is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, issue.ProjectId, ProjectRole.Member, ct);
+            if (auth.Denied) return auth.Failure!;
 
             var comment = issue.AddComment(req.AuthorId, req.Body, clock.UtcNow);
             // Comment has a domain-assigned Guid key, so EF's "key is set ⇒
@@ -233,20 +253,27 @@ internal static class IssuesEndpoints
             await db.SaveChangesAsync(ct);
             return Results.Created($"/api/issues/{id}/comments/{comment.Id}", new { comment.Id });
         })
+        .RequireAuthorization()
         .WithName("AddIssueComment")
-        .WithSummary("Add a comment to an issue")
+        .WithSummary("Add a comment to an issue (requires Member role)")
         .WithTags("Issues")
         .Produces(StatusCodes.Status201Created)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);
 
         app.MapDelete("/api/issues/{id:guid}", async (
             Guid id,
             [FromServices] DbContext db,
             [FromServices] IAuditLog audit,
+            [FromServices] IProjectQueries projects,
+            HttpContext http,
             CancellationToken ct) =>
         {
             var issue = await db.Set<Issue>().FirstOrDefaultAsync(i => i.Id == id, ct);
             if (issue is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, issue.ProjectId, ProjectRole.Member, ct);
+            if (auth.Denied) return auth.Failure!;
             var summary = $"Issue {issue.Id} deleted (was \"{issue.Title}\")";
             db.Set<Issue>().Remove(issue);
             await db.SaveChangesAsync(ct);
@@ -259,10 +286,13 @@ internal static class IssuesEndpoints
 
             return Results.NoContent();
         })
+        .RequireAuthorization()
         .WithName("DeleteIssue")
-        .WithSummary("Delete an issue")
+        .WithSummary("Delete an issue (requires Member role)")
         .WithTags("Issues")
         .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);
 
         app.MapGet("/api/issues/search", async (
@@ -296,12 +326,21 @@ internal static class IssuesEndpoints
             Guid issueId,
             [FromBody] BeginUploadEndpointRequest req,
             [FromServices] IAttachmentService attachments,
+            [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
+            HttpContext http,
             CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(req.FileName))
                 return Results.BadRequest(new { error = "fileName is required." });
             if (req.SizeBytes < 0)
                 return Results.BadRequest(new { error = "sizeBytes must be non-negative." });
+
+            var beginProjectId = await db.Set<Issue>().AsNoTracking()
+                .Where(i => i.Id == issueId).Select(i => (Guid?)i.ProjectId).FirstOrDefaultAsync(ct);
+            if (beginProjectId is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, beginProjectId.Value, ProjectRole.Member, ct);
+            if (auth.Denied) return auth.Failure!;
 
             var result = await attachments.BeginUploadAsync(
                 issueId, req.FileName, req.ContentType ?? "application/octet-stream",
@@ -310,9 +349,11 @@ internal static class IssuesEndpoints
         })
         .RequireAuthorization()
         .WithName("BeginAttachmentUpload")
-        .WithSummary("Begin a pre-signed direct browser upload — returns the PUT URL + metadata")
+        .WithSummary("Begin a pre-signed direct browser upload (requires Member role)")
         .WithTags("Attachments")
         .Produces<BeginUploadResult>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound)
         .ProducesValidationProblem();
 
@@ -321,12 +362,17 @@ internal static class IssuesEndpoints
             Guid attachmentId,
             [FromBody] CompleteUploadRequest req,
             [FromServices] IAttachmentService attachments,
+            [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
             HttpContext http,
             CancellationToken ct) =>
         {
-            var userIdClaim = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            if (!Guid.TryParse(userIdClaim, out var uploadedBy))
-                return Results.Unauthorized();
+            var completeProjectId = await db.Set<Issue>().AsNoTracking()
+                .Where(i => i.Id == issueId).Select(i => (Guid?)i.ProjectId).FirstOrDefaultAsync(ct);
+            if (completeProjectId is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, completeProjectId.Value, ProjectRole.Member, ct);
+            if (auth.Denied) return auth.Failure!;
+            var uploadedBy = auth.UserId;
 
             try
             {
@@ -342,11 +388,12 @@ internal static class IssuesEndpoints
         })
         .RequireAuthorization()
         .WithName("CompleteAttachmentUpload")
-        .WithSummary("Phase 2: confirm a pre-signed upload completed and persist metadata")
+        .WithSummary("Phase 2: confirm a pre-signed upload completed (requires Member role)")
         .WithTags("Attachments")
         .Produces<AttachmentSummary>(StatusCodes.Status201Created)
         .Produces(StatusCodes.Status404NotFound)
-        .Produces(StatusCodes.Status401Unauthorized);
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
 
         app.MapGet("/api/attachments/{id:guid}/download-url", async (
             Guid id,
@@ -367,16 +414,31 @@ internal static class IssuesEndpoints
         app.MapDelete("/api/attachments/{id:guid}", async (
             Guid id,
             [FromServices] IAttachmentService attachments,
+            [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
+            HttpContext http,
             CancellationToken ct) =>
         {
+            var attIssueId = await db.Set<Attachment>().AsNoTracking()
+                .Where(a => a.Id == id).Select(a => (Guid?)a.IssueId).FirstOrDefaultAsync(ct);
+            if (attIssueId is null) return Results.NotFound();
+            var attProjectId = await db.Set<Issue>().AsNoTracking()
+                .Where(i => i.Id == attIssueId.Value).Select(i => (Guid?)i.ProjectId).FirstOrDefaultAsync(ct);
+            if (attProjectId is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, attProjectId.Value, ProjectRole.Member, ct);
+            if (auth.Denied) return auth.Failure!;
+
             return await attachments.DeleteAsync(id, ct)
                 ? Results.NoContent()
                 : Results.NotFound();
         })
+        .RequireAuthorization()
         .WithName("DeleteAttachment")
-        .WithSummary("Delete an attachment (best-effort object removal + metadata removal)")
+        .WithSummary("Delete an attachment (requires Member role)")
         .WithTags("Attachments")
         .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);
 
         return app;
