@@ -52,8 +52,12 @@ internal static class IssuesEndpoints
             Guid projectId,
             [FromServices] DbContext db,
             [FromServices] IProjectQueries projects,
+            HttpContext http,
             CancellationToken ct) =>
         {
+            var auth = await ProjectAccess.RequireAsync(http, projects, projectId, ProjectRole.Viewer, ct);
+            if (auth.Denied) return auth.Failure!;
+
             var project = await projects.GetSummaryAsync(projectId, ct);
             if (project is null) return Results.NotFound();
 
@@ -68,10 +72,13 @@ internal static class IssuesEndpoints
                 .ToListAsync(ct);
             return Results.Ok(items);
         })
+        .RequireAuthorization()
         .WithName("ListIssues")
-        .WithSummary("List issues for a project")
+        .WithSummary("List issues for a project (requires membership)")
         .WithTags("Issues")
         .Produces<List<IssueDto>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);
 
         app.MapPost("/api/projects/{projectId:guid}/issues", async (
@@ -133,10 +140,13 @@ internal static class IssuesEndpoints
             Guid id,
             [FromServices] DbContext db,
             [FromServices] IProjectQueries projects,
+            HttpContext http,
             CancellationToken ct) =>
         {
             var issue = await db.Set<Issue>().AsNoTracking().FirstOrDefaultAsync(i => i.Id == id, ct);
             if (issue is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, issue.ProjectId, ProjectRole.Viewer, ct);
+            if (auth.Denied) return auth.Failure!;
             var project = await projects.GetSummaryAsync(issue.ProjectId, ct);
             if (project is null) return Results.NotFound();
 
@@ -145,10 +155,13 @@ internal static class IssuesEndpoints
                 issue.Status, issue.Type, issue.Priority, issue.Points, issue.AcceptanceCriteria,
                 issue.AssigneeId, issue.ReporterId, issue.Labels, issue.CreatedAt, issue.UpdatedAt));
         })
+        .RequireAuthorization()
         .WithName("GetIssue")
-        .WithSummary("Get a single issue by id")
+        .WithSummary("Get a single issue by id (requires membership)")
         .WithTags("Issues")
         .Produces<IssueDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);
 
         app.MapPut("/api/issues/{id:guid}", async (
@@ -299,28 +312,54 @@ internal static class IssuesEndpoints
             [FromQuery] string? q,
             [FromQuery] int? limit,
             [FromServices] IIssueSearch search,
+            [FromServices] IProjectQueries projects,
+            HttpContext http,
             CancellationToken ct) =>
         {
+            var claim = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(claim, out var userId))
+                return Results.Unauthorized();
+
             var hits = await search.SearchAsync(q ?? string.Empty, limit ?? 20, ct);
-            return Results.Ok(hits);
+            // Post-filter to the caller's member projects (the FTS query spans the
+            // whole tenant; gating in-SQL would mean touching the net10-fragile
+            // PlainToTsQuery expression — deliberately kept out of scope).
+            var allowed = new HashSet<Guid>(await projects.ListMemberProjectIdsAsync(userId, ct));
+            var visible = hits.Where(h => allowed.Contains(h.ProjectId)).ToList();
+            return Results.Ok(visible);
         })
+        .RequireAuthorization()
         .WithName("SearchIssues")
-        .WithSummary("Full-text search across issue titles and descriptions")
+        .WithSummary("Full-text search across issues in projects you're a member of")
         .WithTags("Search")
-        .Produces<IReadOnlyList<IssueSearchHit>>(StatusCodes.Status200OK);
+        .Produces<IReadOnlyList<IssueSearchHit>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized);
 
         app.MapGet("/api/issues/{id:guid}/attachments", async (
             Guid id,
             [FromServices] IAttachmentService attachments,
+            [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
+            HttpContext http,
             CancellationToken ct) =>
         {
+            var listProjectId = await db.Set<Issue>().AsNoTracking()
+                .Where(i => i.Id == id).Select(i => (Guid?)i.ProjectId).FirstOrDefaultAsync(ct);
+            if (listProjectId is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, listProjectId.Value, ProjectRole.Viewer, ct);
+            if (auth.Denied) return auth.Failure!;
+
             var list = await attachments.ListAsync(id, ct);
             return Results.Ok(list);
         })
+        .RequireAuthorization()
         .WithName("ListIssueAttachments")
-        .WithSummary("List attachments on an issue")
+        .WithSummary("List attachments on an issue (requires membership)")
         .WithTags("Attachments")
-        .Produces<IReadOnlyList<AttachmentSummary>>(StatusCodes.Status200OK);
+        .Produces<IReadOnlyList<AttachmentSummary>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound);
 
         app.MapPost("/api/issues/{issueId:guid}/attachments/begin", async (
             Guid issueId,
@@ -398,17 +437,32 @@ internal static class IssuesEndpoints
         app.MapGet("/api/attachments/{id:guid}/download-url", async (
             Guid id,
             [FromServices] IAttachmentService attachments,
+            [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
+            HttpContext http,
             CancellationToken ct) =>
         {
+            var dlIssueId = await db.Set<Attachment>().AsNoTracking()
+                .Where(a => a.Id == id).Select(a => (Guid?)a.IssueId).FirstOrDefaultAsync(ct);
+            if (dlIssueId is null) return Results.NotFound();
+            var dlProjectId = await db.Set<Issue>().AsNoTracking()
+                .Where(i => i.Id == dlIssueId.Value).Select(i => (Guid?)i.ProjectId).FirstOrDefaultAsync(ct);
+            if (dlProjectId is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, dlProjectId.Value, ProjectRole.Viewer, ct);
+            if (auth.Denied) return auth.Failure!;
+
             var url = await attachments.GetDownloadUrlAsync(id, TimeSpan.FromMinutes(15), ct);
             return url is null
                 ? Results.NotFound()
                 : Results.Ok(new { url = url.ToString() });
         })
+        .RequireAuthorization()
         .WithName("GetAttachmentDownloadUrl")
-        .WithSummary("Get a 15-minute pre-signed GET URL for an attachment")
+        .WithSummary("Get a 15-minute pre-signed GET URL for an attachment (requires membership)")
         .WithTags("Attachments")
         .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);
 
         app.MapDelete("/api/attachments/{id:guid}", async (

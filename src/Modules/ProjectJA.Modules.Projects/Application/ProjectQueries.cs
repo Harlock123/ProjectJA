@@ -49,4 +49,12 @@ internal sealed class ProjectQueries(DbContext db) : IProjectQueries
             .Select(m => new ProjectMemberInfo(m.UserId, m.Role, m.AddedAt))
             .ToListAsync(ct);
     }
+
+    public async Task<IReadOnlyList<Guid>> ListMemberProjectIdsAsync(Guid userId, CancellationToken ct)
+    {
+        return await db.Set<Project>().AsNoTracking()
+            .Where(p => p.Members.Any(m => m.UserId == userId))
+            .Select(p => p.Id)
+            .ToListAsync(ct);
+    }
 }

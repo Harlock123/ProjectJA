@@ -17,4 +17,8 @@ public interface IProjectQueries
     Task<ProjectRole?> GetRoleAsync(Guid projectId, Guid userId, CancellationToken ct);
 
     Task<IReadOnlyList<ProjectMemberInfo>> ListMembersAsync(Guid projectId, CancellationToken ct);
+
+    /// <summary>Ids of every project the user is a member of (any role).
+    /// Used to scope list/search reads to what the caller may see.</summary>
+    Task<IReadOnlyList<Guid>> ListMemberProjectIdsAsync(Guid userId, CancellationToken ct);
 }

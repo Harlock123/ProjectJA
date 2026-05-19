@@ -3,8 +3,10 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
+using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using ProjectJA.Modules.Identity.Contracts;
+using ProjectJA.Modules.Projects.Contracts;
 using ProjectJA.Modules.Projects.Domain;
 using ProjectJA.SharedKernel.Audit;
 using ProjectJA.SharedKernel.Time;
@@ -20,29 +22,52 @@ internal static class ProjectsEndpoints
     {
         var group = app.MapGroup("/api/projects").WithTags("Projects");
 
-        group.MapGet("/", async ([FromServices] DbContext db, CancellationToken ct) =>
+        group.MapGet("/", async (
+            [FromServices] DbContext db,
+            HttpContext http,
+            CancellationToken ct) =>
         {
+            // Scoped to the caller's memberships — mirrors the Blazor /projects
+            // list. (Not ProjectAccess: that gates a single project; this filters.)
+            var claim = http.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(claim, out var userId))
+                return Results.Unauthorized();
+
             var items = await db.Set<Project>()
                 .AsNoTracking()
+                .Where(p => p.Members.Any(m => m.UserId == userId))
                 .OrderBy(p => p.Key)
                 .Select(p => new ProjectDto(p.Id, p.Key, p.Name, p.Description, p.CreatedAt))
                 .ToListAsync(ct);
             return Results.Ok(items);
         })
+        .RequireAuthorization()
         .WithName("ListProjects")
-        .WithSummary("List all projects in the current tenant")
-        .Produces<List<ProjectDto>>(StatusCodes.Status200OK);
+        .WithSummary("List projects the caller is a member of")
+        .Produces<List<ProjectDto>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized);
 
-        group.MapGet("/{id:guid}", async (Guid id, [FromServices] DbContext db, CancellationToken ct) =>
+        group.MapGet("/{id:guid}", async (
+            Guid id,
+            [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
+            HttpContext http,
+            CancellationToken ct) =>
         {
+            var auth = await ProjectAccess.RequireAsync(http, projects, id, ProjectRole.Viewer, ct);
+            if (auth.Denied) return auth.Failure!;
+
             var p = await db.Set<Project>().AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
             return p is null
                 ? Results.NotFound()
                 : Results.Ok(new ProjectDto(p.Id, p.Key, p.Name, p.Description, p.CreatedAt));
         })
+        .RequireAuthorization()
         .WithName("GetProject")
-        .WithSummary("Get a single project by id")
+        .WithSummary("Get a single project by id (requires membership)")
         .Produces<ProjectDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);
 
         group.MapPost("/", async (
