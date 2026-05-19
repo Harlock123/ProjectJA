@@ -22,4 +22,6 @@ public sealed class Comment
 
     internal static Comment Create(Guid issueId, Guid authorId, string body, DateTimeOffset now)
         => new(Guid.NewGuid(), issueId, authorId, body, now);
+
+    internal void UpdateBody(string body) => Body = body;
 }

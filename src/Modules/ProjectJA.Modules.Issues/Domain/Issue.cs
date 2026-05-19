@@ -84,4 +84,26 @@ public sealed class Issue
         UpdatedAt = now;
         return c;
     }
+
+    /// <summary>Edit a comment's body. Only the original author may do so.</summary>
+    public void EditComment(Guid commentId, Guid actingUserId, string body, DateTimeOffset now)
+    {
+        var c = _comments.FirstOrDefault(x => x.Id == commentId)
+            ?? throw new InvalidOperationException("Comment not found.");
+        if (c.AuthorId != actingUserId)
+            throw new InvalidOperationException("Only the comment's author can edit it.");
+        c.UpdateBody(body);
+        UpdatedAt = now;
+    }
+
+    /// <summary>Delete a comment. Only the original author may do so.</summary>
+    public void RemoveComment(Guid commentId, Guid actingUserId, DateTimeOffset now)
+    {
+        var c = _comments.FirstOrDefault(x => x.Id == commentId)
+            ?? throw new InvalidOperationException("Comment not found.");
+        if (c.AuthorId != actingUserId)
+            throw new InvalidOperationException("Only the comment's author can delete it.");
+        _comments.Remove(c);
+        UpdatedAt = now;
+    }
 }

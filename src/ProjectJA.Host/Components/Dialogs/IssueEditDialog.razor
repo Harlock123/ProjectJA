@@ -1,11 +1,17 @@
 @using System.Security.Claims
 @using ProjectJA.Modules.Identity.Contracts
 @using ProjectJA.Modules.Issues.Contracts
-@inject AppDbContext Db
+@using ProjectJA.Host.Hubs
+@using ProjectJA.SharedKernel.Realtime
+@using ProjectJA.SharedKernel.Tenancy
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject IClock Clock
 @inject IUserQueries Users
 @inject IAttachmentService Attachments
 @inject AuthenticationStateProvider Auth
+@inject IRealtimeNotifier Realtime
+@inject BoardEventStream EventStream
+@inject ITenantContext Tenant
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
@@ -121,20 +127,46 @@
                         }
                         else
                         {
-                            <MudStack Spacing="2">
-                                @foreach (var c in _comments)
-                                {
-                                    <MudPaper Class="pa-2" Elevation="0" Style="background:#f7f7f7;">
-                                        <MudText Typo="Typo.caption" Color="Color.Default">
-                                            <strong>@AuthorName(c.AuthorId)</strong> · @c.CreatedAt.ToString("yyyy-MM-dd HH:mm")
-                                        </MudText>
-                                        <MudText Typo="Typo.body2" Style="white-space:pre-wrap;">@c.Body</MudText>
-                                    </MudPaper>
-                                }
-                            </MudStack>
+                            <div style="max-height:30vh;overflow-y:auto;padding-right:0.25rem;">
+                                <MudStack Spacing="2">
+                                    @foreach (var c in _comments)
+                                    {
+                                        var mine = c.AuthorId == _currentUserId;
+                                        <MudPaper @key="c.Id" Class="pa-2" Outlined="true"
+                                                  Style="@(mine && _editingCommentId != c.Id ? "cursor:pointer;" : null)"
+                                                  title="@(mine && _editingCommentId != c.Id ? "Double-click to edit or delete" : null)"
+                                                  @ondblclick="@(() => OnCommentDblClick(c))">
+                                            <MudText Typo="Typo.caption" Color="Color.Default">
+                                                <strong>@AuthorName(c.AuthorId)</strong> · @c.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                                            </MudText>
+                                            @if (_editingCommentId == c.Id)
+                                            {
+                                                <MudTextField @bind-Value="_editBody" Variant="Variant.Outlined"
+                                                              Lines="3" MaxLength="8000" Immediate="true" Class="mt-1" />
+                                                <MudStack Row="true" Spacing="2" Class="mt-1" AlignItems="AlignItems.Center">
+                                                    <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                                                               OnClick="SaveEditCommentAsync"
+                                                               Disabled="@string.IsNullOrWhiteSpace(_editBody)">Save</MudButton>
+                                                    <MudButton Size="Size.Small" OnClick="CancelEditComment">Cancel</MudButton>
+                                                    <MudSpacer />
+                                                    <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined"
+                                                               StartIcon="@Icons.Material.Filled.Delete"
+                                                               OnClick="@(() => DeleteCommentAsync(c.Id))">Delete</MudButton>
+                                                </MudStack>
+                                            }
+                                            else
+                                            {
+                                                <MudText Typo="Typo.body2" Style="white-space:pre-wrap;">@c.Body</MudText>
+                                            }
+                                        </MudPaper>
+                                    }
+                                </MudStack>
+                            </div>
                         }
                         <MudTextField @bind-Value="_newComment" Label="Add a comment"
-                                      Variant="Variant.Outlined" Lines="3" MaxLength="8000" />
+                                      Variant="Variant.Outlined" Lines="3" MaxLength="8000"
+                                      Immediate="true" />
+                        @if (_commentError is not null) { <MudAlert Severity="Severity.Error">@_commentError</MudAlert> }
                         <div>
                             <MudButton OnClick="AddCommentAsync" Variant="Variant.Filled" Color="Color.Primary"
                                        StartIcon="@Icons.Material.Filled.Send"
@@ -162,8 +194,11 @@
     private Issue? _issue;
     private string? _projectKey;
     private string? _error;
+    private string? _commentError;
     private string? _attachError;
     private Guid _currentUserId;
+    private Guid? _editingCommentId;
+    private string _editBody = "";
     private string _uploadInputId = "";
     private string _newComment = "";
     private IReadOnlyList<UserSummary> _users = Array.Empty<UserSummary>();
@@ -172,6 +207,14 @@
     private List<Comment> _comments = new();
     private EditModel _edit = new();
     private DotNetObjectReference<IssueEditDialog>? _selfRef;
+    private string? _groupName;
+    private IDisposable? _rtSubscription;
+    // Every DB op uses a fresh short-lived context from the factory (isolated
+    // change tracker), NOT the shared circuit-scoped one. That's what makes the
+    // identical API code correct; reusing the shared context here let realtime
+    // reloads / the board / prior failed saves corrupt change detection (a new
+    // owned Comment was misclassified Modified → "0 rows affected").
+    private bool _ownPublishInFlight;
 
     protected override async Task OnInitializedAsync()
     {
@@ -180,33 +223,70 @@
         var authState = await Auth.GetAuthenticationStateAsync();
         Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _currentUserId);
 
-        Db.ChangeTracker.Clear();
-        _issue = await Db.Issues.AsNoTracking()
-            .Include(i => i.Comments)
-            .FirstOrDefaultAsync(i => i.Id == IssueId);
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            _issue = await db.Issues.AsNoTracking()
+                .Include(i => i.Comments)
+                .FirstOrDefaultAsync(i => i.Id == IssueId);
+            if (_issue is not null)
+            {
+                var project = await db.Projects.AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == _issue.ProjectId);
+                _projectKey = project?.Key ?? "?";
+                _users = await Users.ListAllAsync(default);
+                _userNames = _users.ToDictionary(u => u.Id, u => u.DisplayName);
+                _comments = _issue.Comments.OrderByDescending(c => c.CreatedAt).ToList();
+                _edit = new EditModel
+                {
+                    Title = _issue.Title,
+                    Description = _issue.Description,
+                    Type = _issue.Type,
+                    Status = _issue.Status,
+                    Points = _issue.Points,
+                    AcceptanceCriteria = _issue.AcceptanceCriteria,
+                    AssigneeId = _issue.AssigneeId,
+                    ReporterId = _issue.ReporterId,
+                };
+                var attachments = await Attachments.ListAsync(IssueId, default);
+                _attachments = attachments.ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = $"Couldn't load this issue: {ex.Message}";
+        }
+
+        // Realtime is best-effort: if the tenant isn't resolved for this scope
+        // or subscription fails, the dialog still works fully (no live updates).
         if (_issue is not null)
         {
-            var project = await Db.Projects.AsNoTracking()
-                .FirstOrDefaultAsync(p => p.Id == _issue.ProjectId);
-            _projectKey = project?.Key ?? "?";
-            _users = await Users.ListAllAsync(default);
-            _userNames = _users.ToDictionary(u => u.Id, u => u.DisplayName);
-            _comments = _issue.Comments.OrderBy(c => c.CreatedAt).ToList();
-            _edit = new EditModel
+            try
             {
-                Title = _issue.Title,
-                Description = _issue.Description,
-                Type = _issue.Type,
-                Status = _issue.Status,
-                Points = _issue.Points,
-                AcceptanceCriteria = _issue.AcceptanceCriteria,
-                AssigneeId = _issue.AssigneeId,
-                ReporterId = _issue.ReporterId,
-            };
-            var attachments = await Attachments.ListAsync(IssueId, default);
-            _attachments = attachments.ToList();
+                _groupName = $"tenant:{Tenant.Current.Value:N}:project:{_issue.ProjectId:N}";
+                _rtSubscription = EventStream.Subscribe(_groupName, OnRealtimeAsync);
+            }
+            catch
+            {
+                _groupName = null;
+            }
         }
         _loaded = true;
+    }
+
+    private async Task OnRealtimeAsync(string eventName, object payload)
+    {
+        // Skip our own echo (redundant — the local action already reloaded).
+        if (eventName != "CommentsChanged" || _ownPublishInFlight) return;
+        try
+        {
+            await ReloadCommentsCoreAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+            // A transient realtime refresh must never fault the circuit.
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -231,21 +311,30 @@
             return;
         }
 
-        var tracked = await Db.Issues.FirstOrDefaultAsync(i => i.Id == IssueId);
-        if (tracked is null)
+        try
         {
-            _error = "Issue no longer exists.";
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Issues.FirstOrDefaultAsync(i => i.Id == IssueId);
+            if (tracked is null)
+            {
+                _error = "Issue no longer exists.";
+                return;
+            }
+
+            tracked.Edit(_edit.Title, _edit.Description, Clock.UtcNow);
+            tracked.Reclassify(_edit.Type, _edit.Points, _edit.AcceptanceCriteria, Clock.UtcNow);
+            tracked.Assign(_edit.AssigneeId, Clock.UtcNow);
+            if (_edit.ReporterId != Guid.Empty)
+                tracked.SetReporter(_edit.ReporterId, Clock.UtcNow);
+            if (tracked.Status != _edit.Status)
+                tracked.Transition(_edit.Status, Clock.UtcNow);
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Save failed: {ex.Message}";
             return;
         }
-
-        tracked.Edit(_edit.Title, _edit.Description, Clock.UtcNow);
-        tracked.Reclassify(_edit.Type, _edit.Points, _edit.AcceptanceCriteria, Clock.UtcNow);
-        tracked.Assign(_edit.AssigneeId, Clock.UtcNow);
-        if (_edit.ReporterId != Guid.Empty)
-            tracked.SetReporter(_edit.ReporterId, Clock.UtcNow);
-        if (tracked.Status != _edit.Status)
-            tracked.Transition(_edit.Status, Clock.UtcNow);
-        await Db.SaveChangesAsync();
 
         MudDialog.Close(DialogResult.Ok(IssueId));
     }
@@ -260,27 +349,145 @@
 
     private async Task AddCommentAsync()
     {
-        if (string.IsNullOrWhiteSpace(_newComment) || _currentUserId == Guid.Empty) return;
+        _commentError = null;
+        if (string.IsNullOrWhiteSpace(_newComment)) return;
+        if (_currentUserId == Guid.Empty)
+        {
+            _commentError = "Couldn't resolve your account — reload the page and try again.";
+            return;
+        }
 
-        var tracked = await Db.Issues.Include(i => i.Comments)
-            .FirstOrDefaultAsync(i => i.Id == IssueId);
-        if (tracked is null) return;
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Issues.Include(i => i.Comments)
+                .FirstOrDefaultAsync(i => i.Id == IssueId);
+            if (tracked is null)
+            {
+                _commentError = "This issue no longer exists.";
+                return;
+            }
 
-        tracked.AddComment(_currentUserId, _newComment.Trim(), Clock.UtcNow);
-        await Db.SaveChangesAsync();
+            var comment = tracked.AddComment(_currentUserId, _newComment.Trim(), Clock.UtcNow);
+            // Domain-assigned Guid key → EF would UPDATE (0 rows) instead of
+            // INSERT; force the new owned child to Added.
+            db.Entry(comment).State = EntityState.Added;
+            await db.SaveChangesAsync();
 
-        _newComment = "";
-        _changed = true;
-        await ReloadCommentsAsync();
+            _newComment = "";
+            _changed = true;
+            await ReloadCommentsCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            _commentError = $"Couldn't post comment: {ex.Message}";
+            return;
+        }
+
+        await BroadcastCommentsChangedAsync();
     }
 
-    private async Task ReloadCommentsAsync()
+    private void OnCommentDblClick(Comment c)
     {
-        Db.ChangeTracker.Clear();
-        var fresh = await Db.Issues.AsNoTracking()
+        // Author-only; the domain enforces this again on save/delete.
+        if (c.AuthorId != _currentUserId) return;
+        _commentError = null;
+        _editingCommentId = c.Id;
+        _editBody = c.Body;
+    }
+
+    private void CancelEditComment()
+    {
+        _editingCommentId = null;
+        _editBody = "";
+    }
+
+    private async Task SaveEditCommentAsync()
+    {
+        if (_editingCommentId is not { } id || string.IsNullOrWhiteSpace(_editBody)) return;
+        _commentError = null;
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Issues.Include(i => i.Comments)
+                .FirstOrDefaultAsync(i => i.Id == IssueId);
+            if (tracked is null) { _commentError = "This issue no longer exists."; return; }
+
+            tracked.EditComment(id, _currentUserId, _editBody.Trim(), Clock.UtcNow);
+            await db.SaveChangesAsync();
+
+            _editingCommentId = null;
+            _editBody = "";
+            _changed = true;
+            await ReloadCommentsCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            _commentError = $"Couldn't save edit: {ex.Message}";
+            return;
+        }
+
+        await BroadcastCommentsChangedAsync();
+    }
+
+    private async Task DeleteCommentAsync(Guid commentId)
+    {
+        _commentError = null;
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Issues.Include(i => i.Comments)
+                .FirstOrDefaultAsync(i => i.Id == IssueId);
+            if (tracked is null) { _commentError = "This issue no longer exists."; return; }
+
+            tracked.RemoveComment(commentId, _currentUserId, Clock.UtcNow);
+            await db.SaveChangesAsync();
+
+            if (_editingCommentId == commentId) { _editingCommentId = null; _editBody = ""; }
+            _changed = true;
+            await ReloadCommentsCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            _commentError = $"Couldn't delete comment: {ex.Message}";
+            return;
+        }
+
+        await BroadcastCommentsChangedAsync();
+    }
+
+    // Tell other clients viewing this issue/project to reload their comment
+    // list (covers add, edit, and delete). _ownPublishInFlight makes this
+    // circuit ignore its own echo.
+    private async Task BroadcastCommentsChangedAsync()
+    {
+        if (_groupName is null || _issue is null) return;
+        _ownPublishInFlight = true;
+        try
+        {
+            await Realtime.PublishAsync(
+                _groupName,
+                "CommentsChanged",
+                new { issueId = IssueId, projectId = _issue.ProjectId },
+                default);
+        }
+        catch
+        {
+            // The change is already persisted; a broadcast failure is non-fatal.
+        }
+        finally
+        {
+            _ownPublishInFlight = false;
+        }
+    }
+
+    private async Task ReloadCommentsCoreAsync()
+    {
+        await using var db = DbFactory.CreateDbContext();
+        var fresh = await db.Issues.AsNoTracking()
             .Include(i => i.Comments)
             .FirstOrDefaultAsync(i => i.Id == IssueId);
-        _comments = fresh?.Comments.OrderBy(c => c.CreatedAt).ToList() ?? new();
+        _comments = fresh?.Comments.OrderByDescending(c => c.CreatedAt).ToList() ?? new();
     }
 
     [JSInvokable]
@@ -288,7 +495,8 @@
     {
         _attachError = null;
         _changed = true;
-        await ReloadAttachmentsAsync();
+        try { await ReloadAttachmentsCoreAsync(); }
+        catch (Exception ex) { _attachError = $"Refresh failed: {ex.Message}"; }
         await InvokeAsync(StateHasChanged);
     }
 
@@ -299,7 +507,7 @@
         return InvokeAsync(StateHasChanged);
     }
 
-    private async Task ReloadAttachmentsAsync()
+    private async Task ReloadAttachmentsCoreAsync()
     {
         var list = await Attachments.ListAsync(IssueId, default);
         _attachments = list.ToList();
@@ -307,18 +515,23 @@
 
     private async Task DownloadAsync(Guid attachmentId)
     {
-        var url = await Attachments.GetDownloadUrlAsync(attachmentId, TimeSpan.FromMinutes(15), default);
-        if (url is null) return;
-        await JS.InvokeVoidAsync("open", url.ToString(), "_blank");
+        Uri? url = null;
+        try { url = await Attachments.GetDownloadUrlAsync(attachmentId, TimeSpan.FromMinutes(15), default); }
+        catch (Exception ex) { _attachError = $"Download failed: {ex.Message}"; }
+        if (url is not null) await JS.InvokeVoidAsync("open", url.ToString(), "_blank");
     }
 
     private async Task DeleteAttachmentAsync(Guid attachmentId)
     {
-        if (await Attachments.DeleteAsync(attachmentId, default))
+        try
         {
-            _changed = true;
-            await ReloadAttachmentsAsync();
+            if (await Attachments.DeleteAsync(attachmentId, default))
+            {
+                _changed = true;
+                await ReloadAttachmentsCoreAsync();
+            }
         }
+        catch (Exception ex) { _attachError = $"Delete failed: {ex.Message}"; }
     }
 
     private static string FormatSize(long bytes)
@@ -330,6 +543,7 @@
 
     public ValueTask DisposeAsync()
     {
+        _rtSubscription?.Dispose();
         _selfRef?.Dispose();
         return ValueTask.CompletedTask;
     }
