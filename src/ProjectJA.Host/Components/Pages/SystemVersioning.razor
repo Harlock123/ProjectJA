@@ -1,5 +1,5 @@
 @page "/system/versioning"
-@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "OrgAdmin")]
 @rendermode InteractiveServer
 @using System.Diagnostics
 @using System.Reflection

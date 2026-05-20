@@ -15,7 +15,9 @@ internal static class IdentityEndpoints
 
     internal static IEndpointRouteBuilder Map(IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/invites").RequireAuthorization();
+        // Invites are an org-level concern — creating one makes a new tenant
+        // user — so gate the whole group behind the OrgAdmin policy.
+        var group = app.MapGroup("/api/invites").RequireAuthorization("OrgAdmin");
 
         group.MapGet("/", async ([FromServices] IInviteService invites, CancellationToken ct) =>
         {

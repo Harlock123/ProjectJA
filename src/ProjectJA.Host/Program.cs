@@ -159,7 +159,15 @@ builder.Services.ConfigureApplicationCookie(opts =>
     };
 });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(opts =>
+{
+    // Tenant-wide administrator policy. Read off the `is_org_admin` claim
+    // stamped at sign-in by TenantStampedClaimsFactory. Gates /admin/*,
+    // /audit, /system/versioning, /invites, /admin/users + their REST
+    // counterparts. Project-level role checks (ProjectAccess) are
+    // independent and stay as-is.
+    opts.AddPolicy("OrgAdmin", p => p.RequireAuthenticatedUser().RequireClaim("is_org_admin", "true"));
+});
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddHttpContextAccessor();
 

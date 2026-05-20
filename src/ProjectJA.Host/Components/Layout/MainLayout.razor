@@ -25,14 +25,22 @@
         <AuthorizeView>
             <Authorized>
                 <MudButton Href="/projects" Variant="Variant.Text" Color="Color.Inherit">Projects</MudButton>
-                <MudButton Href="/invites" Variant="Variant.Text" Color="Color.Inherit">Invites</MudButton>
-                <MudButton Href="/audit" Variant="Variant.Text" Color="Color.Inherit">Audit</MudButton>
-                <MudButton Href="/admin/email-outbox" Variant="Variant.Text" Color="Color.Inherit">Outbox</MudButton>
-                <MudButton Href="/admin/oidc-settings" Variant="Variant.Text" Color="Color.Inherit">SSO</MudButton>
-                <MudTooltip Text="Runtime, app, database & loaded-library versions">
-                    <MudButton Href="/system/versioning" Variant="Variant.Text" Color="Color.Inherit"
-                               StartIcon="@Icons.Material.Filled.Info">System</MudButton>
-                </MudTooltip>
+                @* Admin-only nav. Hidden for non-OrgAdmins so they don't see
+                   broken links — the pages themselves also enforce the policy
+                   (defense in depth). *@
+                <AuthorizeView Policy="OrgAdmin" Context="orgAdminCtx">
+                    <Authorized>
+                        <MudButton Href="/invites" Variant="Variant.Text" Color="Color.Inherit">Invites</MudButton>
+                        <MudButton Href="/audit" Variant="Variant.Text" Color="Color.Inherit">Audit</MudButton>
+                        <MudButton Href="/admin/email-outbox" Variant="Variant.Text" Color="Color.Inherit">Outbox</MudButton>
+                        <MudButton Href="/admin/oidc-settings" Variant="Variant.Text" Color="Color.Inherit">SSO</MudButton>
+                        <MudButton Href="/admin/users" Variant="Variant.Text" Color="Color.Inherit">Users</MudButton>
+                        <MudTooltip Text="Runtime, app, database & loaded-library versions">
+                            <MudButton Href="/system/versioning" Variant="Variant.Text" Color="Color.Inherit"
+                                       StartIcon="@Icons.Material.Filled.Info">System</MudButton>
+                        </MudTooltip>
+                    </Authorized>
+                </AuthorizeView>
 
                 <form method="get" action="/search" style="margin: 0 0.5rem;">
                     <input type="text" name="q" placeholder="Search issues…"

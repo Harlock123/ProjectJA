@@ -1,5 +1,5 @@
 @page "/audit"
-@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "OrgAdmin")]
 @rendermode InteractiveServer
 @using ProjectJA.Modules.Audit.Contracts
 @using ProjectJA.Modules.Identity.Contracts

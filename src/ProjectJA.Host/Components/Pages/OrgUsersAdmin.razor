@@ -1,0 +1,135 @@
+@page "/admin/users"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "OrgAdmin")]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using ProjectJA.Modules.Identity.Domain
+@using ProjectJA.SharedKernel.Audit
+@inject AppDbContext Db
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject AuthenticationStateProvider Auth
+@inject IAuditLog Audit
+
+<PageTitle>Org users</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Org users</MudText>
+<MudText Typo="Typo.body2" Color="Color.Default" Class="mb-4">
+    Org administrators have access to invites, audit, email outbox, SSO settings,
+    system info, and this page. <strong>Project-level roles are independent</strong> —
+    being an org admin doesn't auto-promote you on any project. A user must sign
+    out and back in for a flag change to take effect (the value is stamped into
+    the auth cookie at sign-in).
+</MudText>
+
+@if (_users is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else
+{
+    <MudPaper Class="pa-4" Elevation="1">
+        <MudTable Items="_users" Hover="true" Dense="true">
+            <HeaderContent>
+                <MudTh>Name</MudTh>
+                <MudTh>Email</MudTh>
+                <MudTh Style="width:9rem;">Org admin</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.DisplayName</MudTd>
+                <MudTd><span style="font-family:monospace;font-size:0.85rem;">@context.Email</span></MudTd>
+                <MudTd>
+                    <MudSwitch T="bool"
+                               Value="context.IsOrgAdmin"
+                               Color="Color.Success"
+                               ValueChanged="@((bool v) => SetOrgAdminAsync(context, v))" />
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+        @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert> }
+        @if (_message is not null) { <MudAlert Severity="Severity.Info" Class="mt-3">@_message</MudAlert> }
+    </MudPaper>
+}
+
+@code {
+    private Guid _currentUserId;
+    private List<Row>? _users;
+    private string? _error;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _currentUserId);
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        Db.ChangeTracker.Clear();
+        _users = await Db.Set<ApplicationUser>().AsNoTracking()
+            .OrderBy(u => u.LastName).ThenBy(u => u.FirstName).ThenBy(u => u.Email)
+            .Select(u => new Row(
+                u.Id,
+                ((u.FirstName + " " + u.LastName).Trim() != "") ? (u.FirstName + " " + u.LastName).Trim() : (u.Email ?? "(unknown)"),
+                u.Email ?? "",
+                u.IsOrgAdmin))
+            .ToListAsync();
+    }
+
+    private async Task SetOrgAdminAsync(Row row, bool value)
+    {
+        _error = null;
+        _message = null;
+        if (row.IsOrgAdmin == value) return;
+
+        // Last-admin guard: refuse to demote the last remaining org admin —
+        // mirrors the project-Admin invariant in ProjectMembersDialog so the
+        // tenant never gets stranded with no one who can manage it.
+        if (!value)
+        {
+            var adminCount = await Db.Set<ApplicationUser>().AsNoTracking()
+                .CountAsync(u => u.IsOrgAdmin);
+            if (adminCount <= 1)
+            {
+                _error = "Can't demote the last org admin — promote someone else first.";
+                return;
+            }
+        }
+
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Set<ApplicationUser>().FirstAsync(u => u.Id == row.Id);
+            tracked.IsOrgAdmin = value;
+            await db.SaveChangesAsync();
+
+            await AuditAsync("user.org_admin.set",
+                value
+                    ? $"Promoted {row.DisplayName} ({row.Email}) to org admin"
+                    : $"Demoted {row.DisplayName} ({row.Email}) from org admin",
+                new { targetUserId = row.Id, row.Email, isOrgAdmin = value });
+
+            if (row.Id == _currentUserId && !value)
+                _message = "You demoted yourself — sign out and back in to drop the org-admin claim. Until then this session retains access.";
+            else if (row.Id != _currentUserId)
+                _message = $"{row.DisplayName} must sign out and back in for the change to take effect.";
+
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    // Best-effort audit (interactive circuit — no HttpContext, pass actor
+    // explicitly via the AuditEntry.ActorId hook from the membership-audit slice).
+    private async Task AuditAsync(string action, string summary, object detail)
+    {
+        try
+        {
+            await Audit.RecordAsync(
+                new AuditEntry(action, "User", _currentUserId.ToString(), summary, detail, _currentUserId),
+                default);
+        }
+        catch { /* swallowed */ }
+    }
+
+    private sealed record Row(Guid Id, string DisplayName, string Email, bool IsOrgAdmin);
+}

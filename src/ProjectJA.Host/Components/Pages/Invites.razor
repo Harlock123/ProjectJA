@@ -1,5 +1,5 @@
 @page "/invites"
-@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "OrgAdmin")]
 @rendermode InteractiveServer
 @using System.Security.Claims
 @using ProjectJA.Modules.Identity.Contracts

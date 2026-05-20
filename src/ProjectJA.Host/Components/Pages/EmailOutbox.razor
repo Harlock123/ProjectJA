@@ -1,5 +1,5 @@
 @page "/admin/email-outbox"
-@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "OrgAdmin")]
 @rendermode InteractiveServer
 @using ProjectJA.Infrastructure.Email
 @inject IEmailOutboxAdmin Outbox
