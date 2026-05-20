@@ -5,6 +5,7 @@
 @using ProjectJA.Modules.Projects.Contracts
 @using ProjectJA.Modules.Projects.Domain
 @using ProjectJA.Modules.Issues.Contracts
+@using ProjectJA.Modules.Issues.Domain
 @using ProjectJA.SharedKernel.Audit
 @inject AppDbContext Db
 @inject IDbContextFactory<AppDbContext> DbFactory
@@ -27,9 +28,17 @@ else
     <MudButton Href="@($"/projects/{ProjectId}")" Variant="Variant.Text"
                StartIcon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" Class="mb-2">Back to project</MudButton>
 
-    <MudText Typo="Typo.h4" GutterBottom="true">
-        <span style="font-family:monospace;">@_project.Key</span> sprints
-    </MudText>
+    <MudStack Row="true" AlignItems="AlignItems.Baseline" Class="mb-4">
+        <MudText Typo="Typo.h4">
+            <span style="font-family:monospace;">@_project.Key</span> sprints
+        </MudText>
+        <MudSpacer />
+        @if (_isAdmin)
+        {
+            <MudButton Href="@($"/projects/{ProjectId}/sprints/plan")" Variant="Variant.Outlined" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.DragIndicator">Plan (drag &amp; drop)</MudButton>
+        }
+    </MudStack>
 
     @if (!_isAdmin)
     {
@@ -44,61 +53,115 @@ else
     }
     else
     {
-        <MudTable Items="_sprints" Hover="true" Dense="true" Class="mb-4">
-            <HeaderContent>
-                <MudTh>Name</MudTh>
-                <MudTh Style="width:7rem;">Status</MudTh>
-                <MudTh Style="width:5rem;">Issues</MudTh>
-                <MudTh Style="width:14rem;">Planned</MudTh>
-                <MudTh Style="width:14rem;">Started / Completed</MudTh>
-                @if (_isAdmin) { <MudTh Style="width:12rem;"></MudTh> }
-            </HeaderContent>
-            <RowTemplate>
-                <MudTd>
-                    <strong>@context.Name</strong>
-                    @if (!string.IsNullOrWhiteSpace(context.Goal))
-                    {
-                        <div style="font-size:0.85rem;color:#888;">@context.Goal</div>
-                    }
-                </MudTd>
-                <MudTd>
-                    <MudChip T="string" Size="Size.Small" Color="@StatusColor(context.Status)">@context.Status</MudChip>
-                </MudTd>
-                <MudTd>@(_issueCounts.GetValueOrDefault(context.Id, 0))</MudTd>
-                <MudTd>
-                    <MudText Typo="Typo.body2" Color="Color.Default">@FormatRange(context.PlannedStart, context.PlannedEnd)</MudText>
-                </MudTd>
-                <MudTd>
-                    @if (context.StartedAt is { } st)
-                    {
-                        <MudText Typo="Typo.body2" Color="Color.Default">Started @st.ToString("yyyy-MM-dd")</MudText>
-                    }
-                    @if (context.CompletedAt is { } co)
-                    {
-                        <MudText Typo="Typo.body2" Color="Color.Default">Completed @co.ToString("yyyy-MM-dd")</MudText>
-                    }
-                </MudTd>
-                @if (_isAdmin)
-                {
-                    <MudTd>
-                        @if (context.Status == SprintStatus.Planned)
+        <MudExpansionPanels MultiExpansion="true" Class="mb-4">
+            @foreach (var s in _sprints)
+            {
+                var count = _issueCounts.GetValueOrDefault(s.Id, 0);
+                var issues = _issuesBySprint.GetValueOrDefault(s.Id) ?? new List<Issue>();
+                <MudExpansionPanel @key="s.Id">
+                    <TitleContent>
+                        <div style="display:flex;align-items:center;gap:0.75rem;width:100%;">
+                            <strong>@s.Name</strong>
+                            <MudChip T="string" Size="Size.Small" Color="@StatusColor(s.Status)">@s.Status</MudChip>
+                            @if (!string.IsNullOrWhiteSpace(s.Goal))
+                            {
+                                <span style="color:#888;font-size:0.85rem;">@s.Goal</span>
+                            }
+                            <MudSpacer />
+                            <span style="color:#888;font-size:0.85rem;">@count issue(s)</span>
+                            @if (s.StartedAt is { } st)
+                            {
+                                <span style="color:#888;font-size:0.85rem;">· started @st.ToString("yyyy-MM-dd")</span>
+                            }
+                            @if (s.CompletedAt is { } co)
+                            {
+                                <span style="color:#888;font-size:0.85rem;">· completed @co.ToString("yyyy-MM-dd")</span>
+                            }
+                        </div>
+                    </TitleContent>
+                    <ChildContent>
+                        @* Action row — Admin only *@
+                        @if (_isAdmin)
                         {
-                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success"
-                                       StartIcon="@Icons.Material.Filled.PlayArrow"
-                                       OnClick="@(() => StartAsync(context))">Start</MudButton>
-                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
-                                           OnClick="@(() => DeleteAsync(context))" />
+                            <MudStack Row="true" Spacing="2" Class="mb-3">
+                                @if (s.Status == SprintStatus.Planned)
+                                {
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success"
+                                               StartIcon="@Icons.Material.Filled.PlayArrow"
+                                               OnClick="@(() => StartAsync(s))">Start</MudButton>
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                                               StartIcon="@Icons.Material.Filled.Delete"
+                                               OnClick="@(() => DeleteAsync(s))">Delete</MudButton>
+                                }
+                                else if (s.Status == SprintStatus.Active)
+                                {
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
+                                               StartIcon="@Icons.Material.Filled.Stop"
+                                               OnClick="@(() => CompleteAsync(s))">Complete</MudButton>
+                                }
+                                <MudSpacer />
+                                <MudText Typo="Typo.caption" Color="Color.Default">
+                                    Planned: @FormatRange(s.PlannedStart, s.PlannedEnd)
+                                </MudText>
+                            </MudStack>
                         }
-                        else if (context.Status == SprintStatus.Active)
+
+                        @* Report: counts + points per status *@
+                        @{
+                            int totalCount = issues.Count;
+                            int totalPoints = issues.Sum(i => i.Points ?? 0);
+                            (int c, int p) ByStatus(IssueStatus st) =>
+                                (issues.Count(i => i.Status == st), issues.Where(i => i.Status == st).Sum(i => i.Points ?? 0));
+                            var (todoC, todoP) = ByStatus(IssueStatus.Todo);
+                            var (doingC, doingP) = ByStatus(IssueStatus.Doing);
+                            var (doneC, doneP) = ByStatus(IssueStatus.Done);
+                        }
+                        <MudStack Row="true" Spacing="3" Class="mb-3">
+                            <MudPaper Class="pa-2" Outlined="true" Style="min-width:8rem;">
+                                <MudText Typo="Typo.caption" Color="Color.Default">Todo</MudText>
+                                <MudText Typo="Typo.body1"><strong>@todoC</strong> issue(s) · @todoP pt(s)</MudText>
+                            </MudPaper>
+                            <MudPaper Class="pa-2" Outlined="true" Style="min-width:8rem;">
+                                <MudText Typo="Typo.caption" Color="Color.Default">Doing</MudText>
+                                <MudText Typo="Typo.body1"><strong>@doingC</strong> issue(s) · @doingP pt(s)</MudText>
+                            </MudPaper>
+                            <MudPaper Class="pa-2" Outlined="true" Style="min-width:8rem;">
+                                <MudText Typo="Typo.caption" Color="Color.Default">Done</MudText>
+                                <MudText Typo="Typo.body1"><strong>@doneC</strong> issue(s) · @doneP pt(s)</MudText>
+                            </MudPaper>
+                            <MudPaper Class="pa-2" Outlined="true" Style="min-width:8rem;">
+                                <MudText Typo="Typo.caption" Color="Color.Default">Total</MudText>
+                                <MudText Typo="Typo.body1"><strong>@totalCount</strong> issue(s) · @totalPoints pt(s)</MudText>
+                            </MudPaper>
+                        </MudStack>
+
+                        @if (issues.Count == 0)
                         {
-                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
-                                       StartIcon="@Icons.Material.Filled.Stop"
-                                       OnClick="@(() => CompleteAsync(context))">Complete</MudButton>
+                            <MudText Color="Color.Default">No issues in this sprint.</MudText>
                         }
-                    </MudTd>
-                }
-            </RowTemplate>
-        </MudTable>
+                        else
+                        {
+                            <MudTable Items="issues" Hover="true" Dense="true">
+                                <HeaderContent>
+                                    <MudTh Style="width:7rem;">Key</MudTh>
+                                    <MudTh>Title</MudTh>
+                                    <MudTh Style="width:6rem;">Status</MudTh>
+                                    <MudTh Style="width:5rem;">Points</MudTh>
+                                </HeaderContent>
+                                <RowTemplate>
+                                    <MudTd>
+                                        <MudLink Href="@($"/issues/{context.Id}")" Style="font-family:monospace;">@_project!.Key-@context.Number</MudLink>
+                                    </MudTd>
+                                    <MudTd>@context.Title</MudTd>
+                                    <MudTd><MudChip T="string" Size="Size.Small">@context.Status</MudChip></MudTd>
+                                    <MudTd>@(context.Points?.ToString() ?? "—")</MudTd>
+                                </RowTemplate>
+                            </MudTable>
+                        }
+                    </ChildContent>
+                </MudExpansionPanel>
+            }
+        </MudExpansionPanels>
     }
 
     @if (_isAdmin)
@@ -138,6 +201,7 @@ else
     private bool _isAdmin;
     private IReadOnlyList<SprintSummary> _sprints = Array.Empty<SprintSummary>();
     private Dictionary<Guid, int> _issueCounts = new();
+    private Dictionary<Guid, List<Issue>> _issuesBySprint = new();
     private Draft _draft = new();
     private string? _error;
 
@@ -161,12 +225,15 @@ else
         _project = await Db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == ProjectId);
         if (_project is null) return;
         _sprints = await SprintQueriesSvc.ListForProjectAsync(ProjectId, default);
-        // Issue counts grouped per-sprint, one round trip.
-        _issueCounts = await Db.Issues.AsNoTracking()
+        // Load every assigned issue once and group locally — the inline report
+        // needs the full list (not just counts) for the per-status breakdown.
+        var assigned = await Db.Issues.AsNoTracking()
             .Where(i => i.ProjectId == ProjectId && i.SprintId != null)
-            .GroupBy(i => i.SprintId!.Value)
-            .Select(g => new { sid = g.Key, count = g.Count() })
-            .ToDictionaryAsync(x => x.sid, x => x.count);
+            .OrderBy(i => i.Number)
+            .ToListAsync();
+        _issuesBySprint = assigned.GroupBy(i => i.SprintId!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
+        _issueCounts = _issuesBySprint.ToDictionary(kv => kv.Key, kv => kv.Value.Count);
     }
 
     private async Task CreateAsync()

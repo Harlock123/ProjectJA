@@ -36,6 +36,21 @@ else
         <span style="font-size:1rem;color:#888;margin-left:0.5rem;">board</span>
     </MudText>
 
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+        <MudSelect T="string" Label="Show" @bind-Value="_filter" Dense="true" Margin="Margin.Dense"
+                   Style="min-width:18rem;" Variant="Variant.Outlined">
+            <MudSelectItem Value="@("all")">All issues</MudSelectItem>
+            <MudSelectItem Value="@("backlog")">Backlog only</MudSelectItem>
+            @foreach (var s in _sprints.Where(x => x.Status != SprintStatus.Completed))
+            {
+                <MudSelectItem Value="@s.Id.ToString()">@s.Name (@s.Status)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudText Typo="Typo.caption" Color="Color.Default">
+            @ApplyFilter(_issues).Count() of @_issues.Count issues
+        </MudText>
+    </MudStack>
+
     <MudGrid Spacing="2">
         @foreach (var col in Columns)
         {
@@ -102,7 +117,10 @@ else
     private Project? _project;
     private bool _canWrite;
     private List<Issue> _issues = new();
+    private IReadOnlyList<SprintSummary> _sprints = Array.Empty<SprintSummary>();
     private Dictionary<Guid, string> _sprintNames = new();
+    // Filter value conventions: "all" | "backlog" | "<sprint-guid>".
+    private string _filter = "all";
     private IDisposable? _subscription;
     private DotNetObjectReference<Board>? _selfRef;
     private string? _groupName;
@@ -148,12 +166,27 @@ else
             .Where(i => i.ProjectId == ProjectId)
             .OrderBy(i => i.Number)
             .ToListAsync();
-        _sprintNames = (await SprintsQueries.ListForProjectAsync(ProjectId, default))
-            .ToDictionary(s => s.Id, s => s.Name);
+        _sprints = await SprintsQueries.ListForProjectAsync(ProjectId, default);
+        _sprintNames = _sprints.ToDictionary(s => s.Id, s => s.Name);
+        // Default filter: the active sprint if there is one — that's almost
+        // always what users want to see when they hit the board.
+        if (_filter == "all")
+        {
+            var active = _sprints.FirstOrDefault(s => s.Status == SprintStatus.Active);
+            if (active is not null) _filter = active.Id.ToString();
+        }
     }
 
+    private IEnumerable<Issue> ApplyFilter(IEnumerable<Issue> items) => _filter switch
+    {
+        "all" => items,
+        "backlog" => items.Where(i => i.SprintId is null),
+        var s when Guid.TryParse(s, out var sid) => items.Where(i => i.SprintId == sid),
+        _ => items,
+    };
+
     private IEnumerable<Issue> IssuesIn(IssueStatus column) =>
-        _issues.Where(i => i.Status == column);
+        ApplyFilter(_issues).Where(i => i.Status == column);
 
     // Light lanes are near-white tints; in dark mode those glare, so swap to
     // muted dark tints that keep the same Todo/Doing/Done hue cue. (A literal

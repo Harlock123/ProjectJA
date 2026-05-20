@@ -1,0 +1,299 @@
+@page "/projects/{projectId:guid}/sprints/plan"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using ProjectJA.Modules.Projects.Contracts
+@using ProjectJA.Modules.Projects.Domain
+@using ProjectJA.Modules.Issues.Domain
+@using ProjectJA.SharedKernel.Audit
+@using ProjectJA.Host.Components.Dialogs
+@using ProjectJA.Host.Theming
+@inject AppDbContext Db
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IClock Clock
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider Auth
+@inject IProjectQueries Projects
+@inject ISprintQueries SprintsQueries
+@inject IAuditLog Audit
+@inject IDialogService DialogService
+@inject ThemeState ThemeState
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>@(_project is null ? "Plan" : $"{_project.Key} planning")</PageTitle>
+
+@if (_project is null)
+{
+    <MudText>Loading…</MudText>
+}
+else
+{
+    <MudButton Href="@($"/projects/{ProjectId}/sprints")" Variant="Variant.Text"
+               StartIcon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" Class="mb-2">Back to sprints</MudButton>
+
+    <MudText Typo="Typo.h4" GutterBottom="true">
+        <span style="font-family:monospace;">@_project.Key</span> sprint planning
+    </MudText>
+
+    @if (_assignableSprints.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Class="mb-3">
+            No Planned or Active sprints in this project. Create one on the
+            <MudLink Href="@($"/projects/{ProjectId}/sprints")">Sprints page</MudLink> first.
+        </MudAlert>
+    }
+    else
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+            <MudSelect T="Guid?" Label="Plan into sprint" Value="_selectedSprintId"
+                       ValueChanged="OnSelectedSprintChangedAsync"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true"
+                       Style="min-width:22rem;">
+                @foreach (var s in _assignableSprints)
+                {
+                    <MudSelectItem T="Guid?" Value="@s.Id">@s.Name (@s.Status)</MudSelectItem>
+                }
+            </MudSelect>
+            @if (_error is not null) { <MudAlert Severity="Severity.Error" Dense="true">@_error</MudAlert> }
+        </MudStack>
+
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="6">
+                <div class="plan-column" data-target="backlog"
+                     style="@($"min-height:24rem;background:{ColBg()};border:1px solid {LaneBorder()};border-radius:6px;padding:0.5rem;")">
+                    <MudText Typo="Typo.subtitle1" Style="font-weight:600;" Class="px-1 pb-2">
+                        Backlog (@_backlog.Count)
+                    </MudText>
+                    @foreach (var i in _backlog)
+                    {
+                        @RenderCard(i)
+                    }
+                </div>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <div class="plan-column" data-target="sprint"
+                     style="@($"min-height:24rem;background:{ColBg()};border:1px solid {LaneBorder()};border-radius:6px;padding:0.5rem;")">
+                    <MudText Typo="Typo.subtitle1" Style="font-weight:600;" Class="px-1 pb-2">
+                        @SelectedSprintName (@_inSprint.Count)
+                    </MudText>
+                    @foreach (var i in _inSprint)
+                    {
+                        @RenderCard(i)
+                    }
+                </div>
+            </MudItem>
+        </MudGrid>
+
+        <MudText Typo="Typo.caption" Color="Color.Default" Class="mt-2">
+            Drag a card across to move it. Issues are scoped to this project.
+        </MudText>
+    }
+}
+
+<style>
+    .plan-card-dragging { opacity: 0.5; }
+    .plan-column-hover { box-shadow: inset 0 0 0 2px #594ae2; }
+</style>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private Project? _project;
+    private Guid _currentUserId;
+    private bool _isAdmin;
+    private IReadOnlyList<SprintSummary> _assignableSprints = Array.Empty<SprintSummary>();
+    private Dictionary<Guid, string> _sprintNames = new();
+    private Guid? _selectedSprintId;
+    private List<Issue> _backlog = new();
+    private List<Issue> _inSprint = new();
+    private string? _error;
+    private DotNetObjectReference<SprintPlan>? _selfRef;
+
+    private string SelectedSprintName =>
+        _assignableSprints.FirstOrDefault(s => s.Id == _selectedSprintId)?.Name ?? "Sprint";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _currentUserId);
+        var role = await Projects.GetRoleAsync(ProjectId, _currentUserId, default);
+        if (role is null) { Nav.NavigateTo("/projects?denied=1"); return; }
+        _isAdmin = role.Value == ProjectRole.Admin;
+        // Planning is an Admin-only workflow (matches sprint authority). Send
+        // non-admins to the read-only Sprints page rather than the project list
+        // (less confusing — they got here on purpose).
+        if (!_isAdmin) { Nav.NavigateTo($"/projects/{ProjectId}/sprints"); return; }
+        // Re-render when the user toggles dark mode — mirrors Board.razor.
+        ThemeState.Changed += OnThemeChanged;
+        await ReloadAsync();
+    }
+
+    private void OnThemeChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task ReloadAsync()
+    {
+        Db.ChangeTracker.Clear();
+        _project = await Db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == ProjectId);
+        if (_project is null) return;
+
+        var all = await SprintsQueries.ListForProjectAsync(ProjectId, default);
+        _assignableSprints = all.Where(s => s.Status != SprintStatus.Completed).ToList();
+        // Include every sprint in the name lookup — a card's SprintId could be
+        // Completed in edge cases (and the chip should still show its name).
+        _sprintNames = all.ToDictionary(s => s.Id, s => s.Name);
+        // Default the picker to the Active sprint if there is one, else the first Planned.
+        _selectedSprintId ??= _assignableSprints.FirstOrDefault(s => s.Status == SprintStatus.Active)?.Id
+                             ?? _assignableSprints.FirstOrDefault()?.Id;
+        await ReloadLanesAsync();
+    }
+
+    private async Task ReloadLanesAsync()
+    {
+        if (_selectedSprintId is null) { _backlog.Clear(); _inSprint.Clear(); return; }
+        _backlog = await Db.Issues.AsNoTracking()
+            .Where(i => i.ProjectId == ProjectId && i.SprintId == null)
+            .OrderBy(i => i.Number).ToListAsync();
+        _inSprint = await Db.Issues.AsNoTracking()
+            .Where(i => i.ProjectId == ProjectId && i.SprintId == _selectedSprintId)
+            .OrderBy(i => i.Number).ToListAsync();
+    }
+
+    private async Task OnSelectedSprintChangedAsync(Guid? sid)
+    {
+        _selectedSprintId = sid;
+        await ReloadLanesAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_project is null) return;
+        // Same idea as Board.razor: re-init on every render so freshly added
+        // cards get listeners. JS guards via data-dnd-bound.
+        _selfRef ??= DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("projectja.sprintPlan.init", _selfRef);
+    }
+
+    [JSInvokable]
+    public async Task OnIssueDropped(string issueId, string target)
+    {
+        if (!_isAdmin) return;
+        if (!Guid.TryParse(issueId, out var iid)) return;
+
+        Guid? newSprintId = target switch
+        {
+            "backlog" => null,
+            "sprint" => _selectedSprintId,
+            _ => null,
+        };
+        if (target == "sprint" && newSprintId is null) return; // no sprint chosen yet
+
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var issue = await db.Set<Issue>().FirstOrDefaultAsync(i => i.Id == iid);
+            if (issue is null || issue.ProjectId != ProjectId) return;
+            if (issue.SprintId == newSprintId) return; // no-op (e.g. dropped onto its own column)
+
+            var previous = issue.SprintId;
+            issue.AssignToSprint(newSprintId, Clock.UtcNow);
+            await db.SaveChangesAsync();
+
+            try
+            {
+                await Audit.RecordAsync(new AuditEntry(
+                    Action: "issue.sprint_changed",
+                    ResourceType: "Issue",
+                    ResourceId: issue.Id.ToString(),
+                    Summary: newSprintId is null
+                        ? $"Moved issue back to backlog (was sprint {previous})"
+                        : $"Moved issue to sprint {newSprintId} (was {(previous?.ToString() ?? "backlog")})",
+                    Detail: new { issueId = issue.Id, projectId = issue.ProjectId, previousSprintId = previous, newSprintId },
+                    ActorId: _currentUserId), default);
+            }
+            catch { /* audit is best-effort */ }
+
+            await ReloadLanesAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex) { _error = ex.Message; await InvokeAsync(StateHasChanged); }
+    }
+
+    // Match the Board's card markup pixel-for-pixel so users see the same
+    // card on both surfaces — same theme-aware colors, same description
+    // clamp, same chips (priority + sprint name + labels), same status badge,
+    // and the same double-click-to-edit affordance via IssueEditDialog.
+    private RenderFragment RenderCard(Issue i) => __builder =>
+    {
+        var hasSprint = i.SprintId is { } sid && _sprintNames.TryGetValue(sid, out _);
+        var anyChip = i.Priority != IssuePriority.None || i.Labels.Count > 0 || hasSprint;
+
+        <div class="plan-card" data-issue-id="@i.Id" draggable="true"
+             @key="i.Id"
+             title="Drag to move · double-click to edit"
+             @ondblclick="@(() => OpenEditAsync(i.Id))"
+             style="@($"cursor:grab;background:{CardBackground()};border:1px solid {CardBorder()};border-radius:4px;padding:0.5rem 0.75rem;margin-bottom:0.5rem;")">
+            <div style="@($"font-family:monospace;font-size:0.75rem;color:{CardKeyColor()};")">@_project!.Key-@i.Number</div>
+            <div style="@($"font-size:0.9rem;color:{CardTitleColor()};")">@i.Title</div>
+            @if (!string.IsNullOrWhiteSpace(i.Description))
+            {
+                <div style="@($"font-size:0.8rem;color:{CardDescColor()};margin-top:0.15rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;")">@i.Description</div>
+            }
+            @if (anyChip)
+            {
+                <div style="margin-top:0.35rem;display:flex;flex-wrap:wrap;gap:0.25rem;align-items:center;">
+                    @if (i.Priority != IssuePriority.None)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="@PriorityColor(i.Priority)">@i.Priority</MudChip>
+                    }
+                    @if (i.SprintId is { } sid2 && _sprintNames.TryGetValue(sid2, out var sname2))
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Secondary"
+                                 Icon="@Icons.Material.Filled.Loop">@sname2</MudChip>
+                    }
+                    @foreach (var lbl in i.Labels)
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@lbl</MudChip>
+                    }
+                </div>
+            }
+        </div>
+    };
+
+    private async Task OpenEditAsync(Guid issueId)
+    {
+        var parameters = new DialogParameters<IssueEditDialog> { { x => x.IssueId, issueId } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<IssueEditDialog>("Edit issue", parameters, options);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled) return;
+        // Edits can change SprintId / status / priority / labels — reload both
+        // lanes so the change is reflected (an issue could even disappear from
+        // both lanes if reassigned to a different sprint).
+        await ReloadLanesAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // Mirrors Board.razor exactly so cards on both surfaces share one look.
+    private string ColBg() => ThemeState.IsDark ? "#26262e" : "#fafafa";
+    private string LaneBorder() => ThemeState.IsDark ? "#3a3a44" : "#e0e0e0";
+    private string CardBackground() => ThemeState.IsDark ? "#30303a" : "white";
+    private string CardBorder() => ThemeState.IsDark ? "#44444f" : "#ddd";
+    private string CardKeyColor() => ThemeState.IsDark ? "#9a9aa5" : "#888";
+    private string CardTitleColor() => ThemeState.IsDark ? "#e6e6ea" : "inherit";
+    private string CardDescColor() => ThemeState.IsDark ? "#a0a0ab" : "#6a6a6a";
+
+    private static Color PriorityColor(IssuePriority p) => p switch
+    {
+        IssuePriority.Critical => Color.Error,
+        IssuePriority.High => Color.Warning,
+        IssuePriority.Medium => Color.Info,
+        _ => Color.Default,
+    };
+
+    public void Dispose()
+    {
+        ThemeState.Changed -= OnThemeChanged;
+        _selfRef?.Dispose();
+    }
+}
