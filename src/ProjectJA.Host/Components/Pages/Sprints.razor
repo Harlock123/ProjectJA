@@ -2,6 +2,8 @@
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @rendermode InteractiveServer
 @using System.Security.Claims
+@using System.Text.Json
+@using ProjectJA.Modules.Audit.Domain
 @using ProjectJA.Modules.Projects.Contracts
 @using ProjectJA.Modules.Projects.Domain
 @using ProjectJA.Modules.Issues.Contracts
@@ -140,6 +142,23 @@ else
                                 <MudText Typo="Typo.caption" Color="Color.Default">Total</MudText>
                                 <MudText Typo="Typo.body1"><strong>@totalCount</strong> issue(s) · @totalPoints pt(s)</MudText>
                             </MudPaper>
+                            @* For Completed sprints, surface the count of issues that were
+                               cleared back to backlog at close-time (recorded only in the
+                               `sprint.completed` audit row's Detail). *@
+                            @if (s.Status == SprintStatus.Completed)
+                            {
+                                <MudPaper Class="pa-2" Outlined="true" Style="min-width:10rem;">
+                                    <MudText Typo="Typo.caption" Color="Color.Default">Carried over to backlog</MudText>
+                                    @if (_carriedOver.TryGetValue(s.Id, out var carry))
+                                    {
+                                        <MudText Typo="Typo.body1"><strong>@carry</strong> issue(s) at close</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.body2" Color="Color.Default">— (audit row not available)</MudText>
+                                    }
+                                </MudPaper>
+                            }
                         </MudStack>
 
                         @if (issues.Count == 0)
@@ -210,6 +229,11 @@ else
     private Dictionary<Guid, int> _issueCounts = new();
     private Dictionary<Guid, string> _stateNames = new();
     private Dictionary<Guid, WorkflowStateCategory> _stateCategories = new();
+    // For Completed sprints: count of issues that were returned to backlog at
+    // completion time, parsed from the existing `sprint.completed` audit row's
+    // Detail JSON. Empty if the audit row is missing (e.g. purged by the
+    // retention job).
+    private Dictionary<Guid, int> _carriedOver = new();
     private Dictionary<Guid, List<Issue>> _issuesBySprint = new();
     private Draft _draft = new();
     private string? _error;
@@ -237,6 +261,37 @@ else
         var wf = await WorkflowsQueries.GetForProjectAsync(ProjectId, default);
         _stateNames = wf?.States.ToDictionary(s => s.Id, s => s.Name) ?? new();
         _stateCategories = wf?.States.ToDictionary(s => s.Id, s => s.Category) ?? new();
+        await LoadCarriedOverAsync();
+    }
+
+    // Reads back the `sprint.completed` audit rows for this project and parses
+    // each Detail JSON for `sprintId` + `issuesReturnedToBacklog`. The count
+    // isn't denormalized on the Sprint row (deliberate anti-bloat in Slice 4
+    // — the audit log was the single source); this surfaces it without
+    // schema change.
+    private async Task LoadCarriedOverAsync()
+    {
+        _carriedOver = new();
+        var resourceId = ProjectId.ToString();
+        var rows = await Db.Set<AuditEvent>().AsNoTracking()
+            .Where(e => e.Action == "sprint.completed"
+                        && e.ResourceType == "Project"
+                        && e.ResourceId == resourceId
+                        && e.Detail != null)
+            .Select(e => e.Detail!)
+            .ToListAsync();
+        foreach (var json in rows)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty("sprintId", out var sidEl)) continue;
+                if (!doc.RootElement.TryGetProperty("issuesReturnedToBacklog", out var cEl)) continue;
+                if (!Guid.TryParse(sidEl.GetString(), out var sid)) continue;
+                _carriedOver[sid] = cEl.GetInt32();
+            }
+            catch (JsonException) { /* skip malformed rows; one bad row musn't kill the page */ }
+        }
         // Load every assigned issue once and group locally — the inline report
         // needs the full list (not just counts) for the per-status breakdown.
         var assigned = await Db.Issues.AsNoTracking()
