@@ -1,0 +1,313 @@
+@page "/projects/{projectId:guid}/workflow"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using ProjectJA.Modules.Projects.Contracts
+@using ProjectJA.Modules.Projects.Domain
+@using ProjectJA.Modules.Workflows.Contracts
+@using ProjectJA.Modules.Workflows.Domain
+@using ProjectJA.SharedKernel.Audit
+@inject AppDbContext Db
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IClock Clock
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider Auth
+@inject IProjectQueries Projects
+@inject IWorkflowQueries WorkflowsQueries
+@inject IAuditLog Audit
+
+<PageTitle>@(_project is null ? "Workflow" : $"{_project.Key} workflow")</PageTitle>
+
+@if (_project is null)
+{
+    <MudText>Loading…</MudText>
+}
+else
+{
+    <MudButton Href="@($"/projects/{ProjectId}")" Variant="Variant.Text"
+               StartIcon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" Class="mb-2">Back to project</MudButton>
+
+    <MudText Typo="Typo.h4" GutterBottom="true">
+        <span style="font-family:monospace;">@_project.Key</span> workflow
+    </MudText>
+    <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
+        Status pipeline for this project's issues. Each state has a <strong>Category</strong>
+        (Open / In&nbsp;progress / Done) — that's what global logic like sprint completion uses
+        to decide which issues are still active. State names are free-text and can be reordered.
+    </MudText>
+
+    @if (!_isAdmin)
+    {
+        <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
+            Read-only access. Only project Admins can change the workflow.
+        </MudAlert>
+    }
+
+    @if (_workflow is null)
+    {
+        <MudAlert Severity="Severity.Warning">This project has no workflow yet.</MudAlert>
+    }
+    else
+    {
+        <MudPaper Class="pa-4 mb-4" Elevation="1">
+            <MudTable Items="_workflow.States.OrderBy(s => s.Order)" Hover="true" Dense="true">
+                <HeaderContent>
+                    <MudTh Style="width:4rem;">Order</MudTh>
+                    <MudTh>Name</MudTh>
+                    <MudTh Style="width:10rem;">Category</MudTh>
+                    <MudTh Style="width:7rem;">Issues</MudTh>
+                    @if (_isAdmin) { <MudTh Style="width:12rem;"></MudTh> }
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Order</MudTd>
+                    <MudTd>
+                        @if (_isAdmin && _editingId == context.Id)
+                        {
+                            <MudTextField @bind-Value="_editName" Variant="Variant.Outlined"
+                                          Margin="Margin.Dense" MaxLength="200" />
+                        }
+                        else
+                        {
+                            <strong>@context.Name</strong>
+                        }
+                    </MudTd>
+                    <MudTd>
+                        @if (_isAdmin && _editingId == context.Id)
+                        {
+                            <MudSelect T="WorkflowStateCategory" @bind-Value="_editCategory"
+                                       Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense">
+                                @foreach (var c in Enum.GetValues<WorkflowStateCategory>())
+                                {
+                                    <MudSelectItem Value="c">@c</MudSelectItem>
+                                }
+                            </MudSelect>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="@CategoryColor(context.Category)">@context.Category</MudChip>
+                        }
+                    </MudTd>
+                    <MudTd>@(_issueCounts.GetValueOrDefault(context.Id, 0))</MudTd>
+                    @if (_isAdmin)
+                    {
+                        <MudTd>
+                            @if (_editingId == context.Id)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.Check" Size="Size.Small" Color="Color.Success"
+                                               OnClick="SaveEditAsync" title="Save" />
+                                <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                                               OnClick="CancelEdit" title="Cancel" />
+                            }
+                            else
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small"
+                                               Disabled="@(context.Order == 0)"
+                                               OnClick="@(() => MoveAsync(context.Id, -1))" title="Move up" />
+                                <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small"
+                                               Disabled="@(context.Order == _workflow!.States.Count - 1)"
+                                               OnClick="@(() => MoveAsync(context.Id, +1))" title="Move down" />
+                                <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Primary"
+                                               OnClick="@(() => StartEdit(context))" title="Rename / recategorize" />
+                                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                               Disabled="@(_issueCounts.GetValueOrDefault(context.Id, 0) > 0)"
+                                               OnClick="@(() => DeleteAsync(context.Id))"
+                                               title="@(_issueCounts.GetValueOrDefault(context.Id, 0) > 0 ? "Has issues — move them first" : "Delete")" />
+                            }
+                        </MudTd>
+                    }
+                </RowTemplate>
+            </MudTable>
+            @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert> }
+        </MudPaper>
+
+        @if (_isAdmin)
+        {
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudText Typo="Typo.h6" GutterBottom="true">Add a state</MudText>
+                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.End">
+                    <MudTextField Label="Name" @bind-Value="_newName" Variant="Variant.Outlined"
+                                  Margin="Margin.Dense" MaxLength="200" />
+                    <MudSelect T="WorkflowStateCategory" Label="Category" @bind-Value="_newCategory"
+                               Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense" Style="min-width:11rem;">
+                        @foreach (var c in Enum.GetValues<WorkflowStateCategory>())
+                        {
+                            <MudSelectItem Value="c">@c</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudButton OnClick="AddAsync" Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Add">Add</MudButton>
+                </MudStack>
+            </MudPaper>
+        }
+    }
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private Project? _project;
+    private Guid _currentUserId;
+    private bool _isAdmin;
+    private WorkflowView? _workflow;
+    private Dictionary<Guid, int> _issueCounts = new();
+    private string? _error;
+
+    // Inline-edit state for rename + recategorize.
+    private Guid? _editingId;
+    private string _editName = "";
+    private WorkflowStateCategory _editCategory;
+
+    // Add-state form.
+    private string _newName = "";
+    private WorkflowStateCategory _newCategory = WorkflowStateCategory.Open;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _currentUserId);
+        var role = await Projects.GetRoleAsync(ProjectId, _currentUserId, default);
+        if (role is null) { Nav.NavigateTo("/projects?denied=1"); return; }
+        _isAdmin = role.Value == ProjectRole.Admin;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        Db.ChangeTracker.Clear();
+        _project = await Db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == ProjectId);
+        if (_project is null) return;
+        _workflow = await WorkflowsQueries.GetForProjectAsync(ProjectId, default);
+        if (_workflow is null) return;
+        // Issue count per state, for the "can delete?" gate + display.
+        _issueCounts = await Db.Issues.AsNoTracking()
+            .Where(i => i.ProjectId == ProjectId)
+            .GroupBy(i => i.WorkflowStateId)
+            .Select(g => new { sid = g.Key, count = g.Count() })
+            .ToDictionaryAsync(x => x.sid, x => x.count);
+    }
+
+    private void StartEdit(WorkflowStateView s)
+    {
+        _editingId = s.Id;
+        _editName = s.Name;
+        _editCategory = s.Category;
+        _error = null;
+    }
+
+    private void CancelEdit()
+    {
+        _editingId = null;
+        _editName = "";
+    }
+
+    private async Task SaveEditAsync()
+    {
+        if (_editingId is not { } sid || _workflow is null) return;
+        _error = null;
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Set<Workflow>().FirstAsync(w => w.Id == _workflow.Id);
+            tracked.RenameState(sid, _editName);
+            tracked.RecategorizeState(sid, _editCategory);
+            await db.SaveChangesAsync();
+            await AuditAsync("workflow.state.updated",
+                $"Updated workflow state \"{_editName}\" ({_editCategory})",
+                new { workflowId = _workflow.Id, stateId = sid, name = _editName, category = _editCategory.ToString() });
+            _editingId = null;
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private async Task AddAsync()
+    {
+        if (_workflow is null) return;
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_newName)) { _error = "Name is required."; return; }
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Set<Workflow>().FirstAsync(w => w.Id == _workflow.Id);
+            var added = tracked.AddState(_newName, _newCategory);
+            // Owned child with domain-assigned Guid key — force Added so EF
+            // emits INSERT (same trap as Comments / ProjectMember / Sprint).
+            db.Entry(added).State = EntityState.Added;
+            await db.SaveChangesAsync();
+            await AuditAsync("workflow.state.added",
+                $"Added workflow state \"{added.Name}\" ({added.Category})",
+                new { workflowId = _workflow.Id, stateId = added.Id, name = added.Name, category = added.Category.ToString(), order = added.Order });
+            _newName = "";
+            _newCategory = WorkflowStateCategory.Open;
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private async Task DeleteAsync(Guid sid)
+    {
+        if (_workflow is null) return;
+        _error = null;
+        if (_issueCounts.GetValueOrDefault(sid, 0) > 0)
+        {
+            _error = "Move issues out of this state first.";
+            return;
+        }
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Set<Workflow>().FirstAsync(w => w.Id == _workflow.Id);
+            tracked.RemoveState(sid);
+            await db.SaveChangesAsync();
+            await AuditAsync("workflow.state.deleted",
+                "Deleted a workflow state",
+                new { workflowId = _workflow.Id, stateId = sid });
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private async Task MoveAsync(Guid sid, int delta)
+    {
+        if (_workflow is null) return;
+        var ordered = _workflow.States.OrderBy(s => s.Order).Select(s => s.Id).ToList();
+        var idx = ordered.IndexOf(sid);
+        var swapIdx = idx + delta;
+        if (idx < 0 || swapIdx < 0 || swapIdx >= ordered.Count) return;
+        (ordered[idx], ordered[swapIdx]) = (ordered[swapIdx], ordered[idx]);
+        _error = null;
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Set<Workflow>().FirstAsync(w => w.Id == _workflow.Id);
+            tracked.ReorderStates(ordered);
+            await db.SaveChangesAsync();
+            await AuditAsync("workflow.state.reordered",
+                "Reordered workflow states",
+                new { workflowId = _workflow.Id, order = ordered });
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    // Best-effort audit — workflow change already committed, log failure must
+    // not surface to the admin (same pattern as ProjectMembersDialog).
+    private async Task AuditAsync(string action, string summary, object detail)
+    {
+        try
+        {
+            await Audit.RecordAsync(
+                new AuditEntry(action, "Project", ProjectId.ToString(), summary, detail, _currentUserId),
+                default);
+        }
+        catch { /* swallowed */ }
+    }
+
+    private static Color CategoryColor(WorkflowStateCategory c) => c switch
+    {
+        WorkflowStateCategory.Open => Color.Default,
+        WorkflowStateCategory.InProgress => Color.Warning,
+        WorkflowStateCategory.Done => Color.Success,
+        _ => Color.Default,
+    };
+}

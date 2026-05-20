@@ -11,6 +11,8 @@ using ProjectJA.Modules.Issues.Domain;
 using ProjectJA.Modules.Issues.Persistence;
 using ProjectJA.Modules.Projects.Domain;
 using ProjectJA.Modules.Projects.Persistence;
+using ProjectJA.Modules.Workflows.Domain;
+using ProjectJA.Modules.Workflows.Persistence;
 
 namespace ProjectJA.Infrastructure.Persistence;
 
@@ -23,6 +25,7 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRo
     public DbSet<TenantOidcConfig> TenantOidcConfigs => Set<TenantOidcConfig>();
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<Sprint> Sprints => Set<Sprint>();
+    public DbSet<Workflow> Workflows => Set<Workflow>();
     public DbSet<Issue> Issues => Set<Issue>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
@@ -37,6 +40,7 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRo
         modelBuilder.ApplyConfiguration(new TenantOidcConfigConfiguration());
         modelBuilder.ApplyConfiguration(new ProjectConfiguration());
         modelBuilder.ApplyConfiguration(new SprintConfiguration());
+        modelBuilder.ApplyConfiguration(new WorkflowConfiguration());
         modelBuilder.ApplyConfiguration(new IssueConfiguration());
         modelBuilder.ApplyConfiguration(new AttachmentConfiguration());
         modelBuilder.ApplyConfiguration(new AuditEventConfiguration());

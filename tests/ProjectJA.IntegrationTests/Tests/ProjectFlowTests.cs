@@ -7,6 +7,8 @@ using ProjectJA.Modules.Identity.Contracts;
 using ProjectJA.Modules.Issues.Domain;
 using ProjectJA.Modules.Projects.Contracts;
 using ProjectJA.Modules.Projects.Domain;
+using ProjectJA.Modules.Workflows.Contracts;
+using ProjectJA.Modules.Workflows.Domain;
 using ProjectJA.SharedKernel.Tenancy;
 using ProjectJA.SharedKernel.Time;
 
@@ -31,12 +33,22 @@ public sealed class ProjectFlowTests(AppFactory factory)
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         var key = $"FLOW{Random.Shared.Next(1000, 9999)}";
-        var project = Project.Create(org!.Id, key, "Flow project", null, clock.UtcNow);
+        var project = Project.Create(org!.Id, key, "Flow project", null, Guid.Empty, clock.UtcNow);
         db.Projects.Add(project);
         await db.SaveChangesAsync();
 
+        // Seed the default workflow so the issue has a starting state to point at.
+        var seeder = scope.ServiceProvider.GetRequiredService<IWorkflowSeeder>();
+        var workflowId = await seeder.EnsureDefaultForProjectAsync(project.Id, clock.UtcNow, default);
+
+        var workflows = scope.ServiceProvider.GetRequiredService<IWorkflowQueries>();
+        var wf = await workflows.GetForProjectAsync(project.Id, default);
+        Assert.NotNull(wf);
+        var openState = wf!.States.OrderBy(s => s.Order).First(s => s.Category == WorkflowStateCategory.Open);
+
         var allocated = project.AllocateIssueNumber();
-        var issue = Issue.Create(project.Id, allocated, "Flow issue", "body", Guid.Empty, clock.UtcNow);
+        var issue = Issue.Create(project.Id, allocated, "Flow issue", "body",
+            openState.Id, Guid.Empty, clock.UtcNow);
         db.Issues.Add(issue);
         await db.SaveChangesAsync();
 
@@ -44,7 +56,7 @@ public sealed class ProjectFlowTests(AppFactory factory)
             .FirstOrDefaultAsync(i => i.ProjectId == project.Id && i.Number == allocated);
         Assert.NotNull(fetched);
         Assert.Equal("Flow issue", fetched!.Title);
-        Assert.Equal(IssueStatus.Todo, fetched.Status);
+        Assert.Equal(openState.Id, fetched.WorkflowStateId);
 
         var projects = scope.ServiceProvider.GetRequiredService<IProjectQueries>();
         var summary = await projects.GetSummaryAsync(project.Id, default);

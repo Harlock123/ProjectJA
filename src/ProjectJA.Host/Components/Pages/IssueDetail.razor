@@ -6,11 +6,14 @@
 @using ProjectJA.Modules.Identity.Contracts
 @using ProjectJA.Modules.Projects.Contracts
 @using ProjectJA.Modules.Projects.Domain
+@using ProjectJA.Modules.Workflows.Contracts
+@using ProjectJA.Modules.Workflows.Domain
 @inject AppDbContext Db
 @inject IClock Clock
 @inject IAttachmentService Attachments
 @inject IUserQueries Users
 @inject IProjectQueries Projects
+@inject IWorkflowQueries WorkflowsQueries
 @inject AuthenticationStateProvider Auth
 @inject NavigationManager Nav
 @inject ISnackbar Snackbar
@@ -30,7 +33,7 @@ else
 
     <MudText Typo="Typo.h4" GutterBottom="true">
         <span style="font-family:monospace;">@_projectKey-@_issue.Number</span>
-        <MudChip T="string" Color="@StatusColor(_issue.Status)" Size="Size.Small" Class="ml-2">@_issue.Status</MudChip>
+        <MudChip T="string" Color="@StatusColor(_state?.Category)" Size="Size.Small" Class="ml-2">@(_state?.Name ?? "—")</MudChip>
     </MudText>
     <MudPaper Class="pa-4 mb-4" Elevation="1">
         <MudText Typo="Typo.h6" GutterBottom="true">Details</MudText>
@@ -59,7 +62,7 @@ else
                                  Variant="Variant.Outlined" Min="0" Max="100" />
             </MudItem>
             <MudItem xs="12" sm="4">
-                <MudTextField Label="Status" Value="@_issue.Status.ToString()" ReadOnly="true"
+                <MudTextField Label="Status" Value="@(_state?.Name ?? "—")" ReadOnly="true"
                               Variant="Variant.Outlined"
                               HelperText="Change status on the board or project list." />
             </MudItem>
@@ -159,6 +162,7 @@ else
 
     private Issue? _issue;
     private string? _projectKey;
+    private WorkflowStateView? _state;
     private List<AttachmentSummary>? _attachments;
     private string? _error;
     private string? _saveError;
@@ -210,6 +214,7 @@ else
         if (_issue is null) return;
         var project = await Db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == _issue.ProjectId);
         _projectKey = project?.Key ?? "?";
+        _state = await WorkflowsQueries.GetStateAsync(_issue.WorkflowStateId, default);
         _users = await Users.ListAllAsync(default);
         _userNames = _users.ToDictionary(u => u.Id, u => u.DisplayName);
         _edit = new EditModel
@@ -311,11 +316,11 @@ else
         return $"{bytes / 1024.0 / 1024.0:0.##} MB";
     }
 
-    private static Color StatusColor(IssueStatus s) => s switch
+    private static Color StatusColor(WorkflowStateCategory? c) => c switch
     {
-        IssueStatus.Todo => Color.Default,
-        IssueStatus.Doing => Color.Warning,
-        IssueStatus.Done => Color.Success,
+        WorkflowStateCategory.Open => Color.Default,
+        WorkflowStateCategory.InProgress => Color.Warning,
+        WorkflowStateCategory.Done => Color.Success,
         _ => Color.Default,
     };
 }

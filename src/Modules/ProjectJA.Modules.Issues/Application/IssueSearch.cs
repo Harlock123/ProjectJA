@@ -5,10 +5,12 @@ using ProjectJA.Modules.Issues.Contracts;
 using ProjectJA.Modules.Issues.Domain;
 using ProjectJA.Modules.Issues.Persistence;
 using ProjectJA.Modules.Projects.Contracts;
+using ProjectJA.Modules.Workflows.Contracts;
+using ProjectJA.Modules.Workflows.Domain;
 
 namespace ProjectJA.Modules.Issues.Application;
 
-internal sealed class IssueSearch(DbContext db, IProjectQueries projects) : IIssueSearch
+internal sealed class IssueSearch(DbContext db, IProjectQueries projects, IWorkflowQueries workflows) : IIssueSearch
 {
     public async Task<IReadOnlyList<IssueSearchHit>> SearchAsync(string query, int limit, CancellationToken ct)
     {
@@ -30,7 +32,7 @@ internal sealed class IssueSearch(DbContext db, IProjectQueries projects) : IIss
             .Take(cap)
             .Select(i => new
             {
-                i.Id, i.ProjectId, i.Number, i.Title, i.Description, i.Status,
+                i.Id, i.ProjectId, i.Number, i.Title, i.Description, i.WorkflowStateId,
                 Rank = (double)EF.Property<NpgsqlTsVector>(i, IssueConfiguration.SearchVectorShadowProperty)
                             .Rank(EF.Functions.PlainToTsQuery("english", query))
             })
@@ -43,9 +45,27 @@ internal sealed class IssueSearch(DbContext db, IProjectQueries projects) : IIss
             if (summary is not null) projectKeys[pid] = summary.Key;
         }
 
-        return rows.Select(r => new IssueSearchHit(
-            r.Id, r.ProjectId,
-            projectKeys.GetValueOrDefault(r.ProjectId, "?"),
-            r.Number, r.Title, r.Description, r.Status, r.Rank)).ToList();
+        // Resolve each state once, cached locally. State count is small
+        // (≤ workflow size × project count among the hits); not worth
+        // batching further.
+        var stateLookup = new Dictionary<Guid, WorkflowStateView>();
+        foreach (var sid in rows.Select(r => r.WorkflowStateId).Distinct())
+        {
+            var s = await workflows.GetStateAsync(sid, ct);
+            if (s is not null) stateLookup[sid] = s;
+        }
+
+        return rows.Select(r =>
+        {
+            var s = stateLookup.GetValueOrDefault(r.WorkflowStateId);
+            return new IssueSearchHit(
+                r.Id, r.ProjectId,
+                projectKeys.GetValueOrDefault(r.ProjectId, "?"),
+                r.Number, r.Title, r.Description,
+                r.WorkflowStateId,
+                s?.Name ?? "?",
+                s?.Category ?? WorkflowStateCategory.Open,
+                r.Rank);
+        }).ToList();
     }
 }

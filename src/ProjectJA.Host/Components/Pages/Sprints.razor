@@ -6,6 +6,8 @@
 @using ProjectJA.Modules.Projects.Domain
 @using ProjectJA.Modules.Issues.Contracts
 @using ProjectJA.Modules.Issues.Domain
+@using ProjectJA.Modules.Workflows.Contracts
+@using ProjectJA.Modules.Workflows.Domain
 @using ProjectJA.SharedKernel.Audit
 @inject AppDbContext Db
 @inject IDbContextFactory<AppDbContext> DbFactory
@@ -15,6 +17,7 @@
 @inject IProjectQueries Projects
 @inject ISprintQueries SprintQueriesSvc
 @inject ISprintIssueOps SprintIssueOpsSvc
+@inject IWorkflowQueries WorkflowsQueries
 @inject IAuditLog Audit
 
 <PageTitle>@(_project is null ? "Sprints" : $"{_project.Key} sprints")</PageTitle>
@@ -106,24 +109,28 @@ else
                             </MudStack>
                         }
 
-                        @* Report: counts + points per status *@
+                        @* Report: counts + points by workflow-state Category.
+                           States have custom names per project but always fall
+                           into Open / InProgress / Done — those buckets are the
+                           meaningful axis. *@
                         @{
                             int totalCount = issues.Count;
                             int totalPoints = issues.Sum(i => i.Points ?? 0);
-                            (int c, int p) ByStatus(IssueStatus st) =>
-                                (issues.Count(i => i.Status == st), issues.Where(i => i.Status == st).Sum(i => i.Points ?? 0));
-                            var (todoC, todoP) = ByStatus(IssueStatus.Todo);
-                            var (doingC, doingP) = ByStatus(IssueStatus.Doing);
-                            var (doneC, doneP) = ByStatus(IssueStatus.Done);
+                            (int c, int p) ByCat(WorkflowStateCategory cat) =>
+                                (issues.Count(i => _stateCategories.GetValueOrDefault(i.WorkflowStateId) == cat),
+                                 issues.Where(i => _stateCategories.GetValueOrDefault(i.WorkflowStateId) == cat).Sum(i => i.Points ?? 0));
+                            var (openC, openP) = ByCat(WorkflowStateCategory.Open);
+                            var (ipC, ipP) = ByCat(WorkflowStateCategory.InProgress);
+                            var (doneC, doneP) = ByCat(WorkflowStateCategory.Done);
                         }
                         <MudStack Row="true" Spacing="3" Class="mb-3">
                             <MudPaper Class="pa-2" Outlined="true" Style="min-width:8rem;">
-                                <MudText Typo="Typo.caption" Color="Color.Default">Todo</MudText>
-                                <MudText Typo="Typo.body1"><strong>@todoC</strong> issue(s) · @todoP pt(s)</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Default">Open</MudText>
+                                <MudText Typo="Typo.body1"><strong>@openC</strong> issue(s) · @openP pt(s)</MudText>
                             </MudPaper>
                             <MudPaper Class="pa-2" Outlined="true" Style="min-width:8rem;">
-                                <MudText Typo="Typo.caption" Color="Color.Default">Doing</MudText>
-                                <MudText Typo="Typo.body1"><strong>@doingC</strong> issue(s) · @doingP pt(s)</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Default">In progress</MudText>
+                                <MudText Typo="Typo.body1"><strong>@ipC</strong> issue(s) · @ipP pt(s)</MudText>
                             </MudPaper>
                             <MudPaper Class="pa-2" Outlined="true" Style="min-width:8rem;">
                                 <MudText Typo="Typo.caption" Color="Color.Default">Done</MudText>
@@ -153,7 +160,7 @@ else
                                         <MudLink Href="@($"/issues/{context.Id}")" Style="font-family:monospace;">@_project!.Key-@context.Number</MudLink>
                                     </MudTd>
                                     <MudTd>@context.Title</MudTd>
-                                    <MudTd><MudChip T="string" Size="Size.Small">@context.Status</MudChip></MudTd>
+                                    <MudTd><MudChip T="string" Size="Size.Small">@(_stateNames.GetValueOrDefault(context.WorkflowStateId, "?"))</MudChip></MudTd>
                                     <MudTd>@(context.Points?.ToString() ?? "—")</MudTd>
                                 </RowTemplate>
                             </MudTable>
@@ -201,6 +208,8 @@ else
     private bool _isAdmin;
     private IReadOnlyList<SprintSummary> _sprints = Array.Empty<SprintSummary>();
     private Dictionary<Guid, int> _issueCounts = new();
+    private Dictionary<Guid, string> _stateNames = new();
+    private Dictionary<Guid, WorkflowStateCategory> _stateCategories = new();
     private Dictionary<Guid, List<Issue>> _issuesBySprint = new();
     private Draft _draft = new();
     private string? _error;
@@ -225,6 +234,9 @@ else
         _project = await Db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == ProjectId);
         if (_project is null) return;
         _sprints = await SprintQueriesSvc.ListForProjectAsync(ProjectId, default);
+        var wf = await WorkflowsQueries.GetForProjectAsync(ProjectId, default);
+        _stateNames = wf?.States.ToDictionary(s => s.Id, s => s.Name) ?? new();
+        _stateCategories = wf?.States.ToDictionary(s => s.Id, s => s.Category) ?? new();
         // Load every assigned issue once and group locally — the inline report
         // needs the full list (not just counts) for the per-status breakdown.
         var assigned = await Db.Issues.AsNoTracking()

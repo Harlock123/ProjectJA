@@ -8,6 +8,8 @@ using ProjectJA.Modules.Issues.Contracts;
 using ProjectJA.Modules.Issues.Domain;
 using ProjectJA.Modules.Projects.Contracts;
 using ProjectJA.Modules.Projects.Domain;
+using ProjectJA.Modules.Workflows.Contracts;
+using ProjectJA.Modules.Workflows.Domain;
 using ProjectJA.SharedKernel.Audit;
 using ProjectJA.SharedKernel.Realtime;
 using ProjectJA.SharedKernel.Tenancy;
@@ -25,7 +27,7 @@ internal static class IssuesEndpoints
         string Title, string? Description,
         IssueType Type, IssuePriority Priority, int? Points, string? AcceptanceCriteria,
         Guid? AssigneeId, Guid ReporterId, IReadOnlyList<string>? Labels);
-    internal sealed record TransitionRequest(IssueStatus Status);
+    internal sealed record TransitionRequest(Guid WorkflowStateId);
     internal sealed record AssignSprintRequest(Guid? SprintId);
     internal sealed record AddCommentRequest(string Body, Guid AuthorId);
     internal sealed record BeginUploadEndpointRequest(string FileName, string? ContentType, long SizeBytes);
@@ -36,7 +38,9 @@ internal static class IssuesEndpoints
         int Number,
         string Title,
         string? Description,
-        IssueStatus Status,
+        Guid WorkflowStateId,
+        string WorkflowStateName,
+        WorkflowStateCategory WorkflowStateCategory,
         IssueType Type,
         IssuePriority Priority,
         int? Points,
@@ -53,6 +57,7 @@ internal static class IssuesEndpoints
             Guid projectId,
             [FromServices] DbContext db,
             [FromServices] IProjectQueries projects,
+            [FromServices] IWorkflowQueries workflows,
             HttpContext http,
             CancellationToken ct) =>
         {
@@ -62,15 +67,23 @@ internal static class IssuesEndpoints
             var project = await projects.GetSummaryAsync(projectId, ct);
             if (project is null) return Results.NotFound();
 
-            var items = await db.Set<Issue>()
+            var workflow = await workflows.GetForProjectAsync(projectId, ct);
+            var stateMap = workflow?.States.ToDictionary(s => s.Id) ?? new();
+
+            var raw = await db.Set<Issue>()
                 .AsNoTracking()
                 .Where(i => i.ProjectId == projectId)
                 .OrderBy(i => i.Number)
-                .Select(i => new IssueDto(
-                    i.Id, i.ProjectId, project.Key, i.Number, i.Title, i.Description,
-                    i.Status, i.Type, i.Priority, i.Points, i.AcceptanceCriteria, i.AssigneeId, i.ReporterId,
-                    i.Labels, i.CreatedAt, i.UpdatedAt))
                 .ToListAsync(ct);
+            var items = raw.Select(i =>
+            {
+                var s = stateMap.GetValueOrDefault(i.WorkflowStateId);
+                return new IssueDto(
+                    i.Id, i.ProjectId, project.Key, i.Number, i.Title, i.Description,
+                    i.WorkflowStateId, s?.Name ?? "?", s?.Category ?? WorkflowStateCategory.Open,
+                    i.Type, i.Priority, i.Points, i.AcceptanceCriteria, i.AssigneeId, i.ReporterId,
+                    i.Labels, i.CreatedAt, i.UpdatedAt);
+            }).ToList();
             return Results.Ok(items);
         })
         .RequireAuthorization()
@@ -87,6 +100,7 @@ internal static class IssuesEndpoints
             [FromBody] CreateIssueRequest req,
             [FromServices] DbContext db,
             [FromServices] IProjectQueries projects,
+            [FromServices] IWorkflowQueries workflows,
             [FromServices] IAuditLog audit,
             [FromServices] IClock clock,
             HttpContext http,
@@ -102,10 +116,21 @@ internal static class IssuesEndpoints
             var project = await projects.GetSummaryAsync(projectId, ct);
             if (project is null) return Results.NotFound();
 
+            // The initial state is the first Open-category state by Order in the
+            // project's workflow (matches the old "Todo" default). If there's
+            // somehow no Open state, fall back to the first state overall.
+            var wf = await workflows.GetForProjectAsync(projectId, ct);
+            if (wf is null || wf.States.Count == 0)
+                return Results.BadRequest(new { error = "Project has no workflow configured." });
+            var initialState = wf.States.OrderBy(s => s.Order)
+                .FirstOrDefault(s => s.Category == WorkflowStateCategory.Open)
+                ?? wf.States.OrderBy(s => s.Order).First();
+
             var number = await projects.AllocateNextIssueNumberAsync(projectId, ct);
             if (number is null) return Results.NotFound();
 
-            var issue = Issue.Create(project.Id, number.Value, req.Title, req.Description, createdBy, clock.UtcNow);
+            var issue = Issue.Create(project.Id, number.Value, req.Title, req.Description,
+                initialState.Id, createdBy, clock.UtcNow);
             issue.Reclassify(req.Type ?? IssueType.Task, req.Points, req.AcceptanceCriteria, clock.UtcNow);
             issue.SetPriority(req.Priority ?? IssuePriority.Medium, clock.UtcNow);
             if (req.Labels is not null)
@@ -124,7 +149,8 @@ internal static class IssuesEndpoints
 
             return Results.Created($"/api/issues/{issue.Id}", new IssueDto(
                 issue.Id, issue.ProjectId, project.Key, issue.Number, issue.Title, issue.Description,
-                issue.Status, issue.Type, issue.Priority, issue.Points, issue.AcceptanceCriteria,
+                issue.WorkflowStateId, initialState.Name, initialState.Category,
+                issue.Type, issue.Priority, issue.Points, issue.AcceptanceCriteria,
                 issue.AssigneeId, issue.ReporterId, issue.Labels, issue.CreatedAt, issue.UpdatedAt));
         })
         .RequireAuthorization()
@@ -141,6 +167,7 @@ internal static class IssuesEndpoints
             Guid id,
             [FromServices] DbContext db,
             [FromServices] IProjectQueries projects,
+            [FromServices] IWorkflowQueries workflows,
             HttpContext http,
             CancellationToken ct) =>
         {
@@ -150,10 +177,12 @@ internal static class IssuesEndpoints
             if (auth.Denied) return auth.Failure!;
             var project = await projects.GetSummaryAsync(issue.ProjectId, ct);
             if (project is null) return Results.NotFound();
+            var state = await workflows.GetStateAsync(issue.WorkflowStateId, ct);
 
             return Results.Ok(new IssueDto(
                 issue.Id, issue.ProjectId, project.Key, issue.Number, issue.Title, issue.Description,
-                issue.Status, issue.Type, issue.Priority, issue.Points, issue.AcceptanceCriteria,
+                issue.WorkflowStateId, state?.Name ?? "?", state?.Category ?? WorkflowStateCategory.Open,
+                issue.Type, issue.Priority, issue.Points, issue.AcceptanceCriteria,
                 issue.AssigneeId, issue.ReporterId, issue.Labels, issue.CreatedAt, issue.UpdatedAt));
         })
         .RequireAuthorization()
@@ -206,6 +235,7 @@ internal static class IssuesEndpoints
             [FromServices] IRealtimeNotifier realtime,
             [FromServices] ITenantContext tenant,
             [FromServices] IProjectQueries projects,
+            [FromServices] IWorkflowQueries workflows,
             HttpContext http,
             CancellationToken ct) =>
         {
@@ -213,31 +243,40 @@ internal static class IssuesEndpoints
             if (issue is null) return Results.NotFound();
             var auth = await ProjectAccess.RequireAsync(http, projects, issue.ProjectId, ProjectRole.Member, ct);
             if (auth.Denied) return auth.Failure!;
-            var oldStatus = issue.Status;
-            issue.Transition(req.Status, clock.UtcNow);
+
+            // The target state must belong to this issue's project's workflow.
+            var wf = await workflows.GetForProjectAsync(issue.ProjectId, ct);
+            var target = wf?.States.FirstOrDefault(s => s.Id == req.WorkflowStateId);
+            if (target is null)
+                return Results.BadRequest(new { error = "Target state is not in this project's workflow." });
+
+            var oldStateId = issue.WorkflowStateId;
+            var oldState = wf!.States.FirstOrDefault(s => s.Id == oldStateId);
+            issue.Transition(req.WorkflowStateId, clock.UtcNow);
             await db.SaveChangesAsync(ct);
 
             await audit.RecordAsync(new AuditEntry(
                 Action: "issue.transitioned",
                 ResourceType: "Issue",
                 ResourceId: issue.Id.ToString(),
-                Summary: $"Issue moved {oldStatus} → {issue.Status}",
-                Detail: new { from = oldStatus.ToString(), to = issue.Status.ToString() }), ct);
+                Summary: $"Issue moved {oldState?.Name ?? "?"} → {target.Name}",
+                Detail: new { fromStateId = oldStateId, from = oldState?.Name, toStateId = target.Id, to = target.Name }), ct);
 
             var groupName = $"tenant:{tenant.Current.Value:N}:project:{issue.ProjectId:N}";
             await realtime.PublishAsync(
                 groupName,
                 "IssueMoved",
-                new { issueId = issue.Id, projectId = issue.ProjectId, status = issue.Status },
+                new { issueId = issue.Id, projectId = issue.ProjectId, workflowStateId = issue.WorkflowStateId },
                 ct);
 
             return Results.NoContent();
         })
         .RequireAuthorization()
         .WithName("TransitionIssueStatus")
-        .WithSummary("Transition an issue between Todo / Doing / Done (requires Member role)")
+        .WithSummary("Transition an issue to a different workflow state (requires Member role)")
         .WithTags("Issues")
         .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);

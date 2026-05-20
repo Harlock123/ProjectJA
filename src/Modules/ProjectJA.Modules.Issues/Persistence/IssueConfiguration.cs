@@ -18,7 +18,7 @@ public sealed class IssueConfiguration : IEntityTypeConfiguration<Issue>
         b.Property(x => x.Number).IsRequired();
         b.Property(x => x.Title).HasMaxLength(300).IsRequired();
         b.Property(x => x.Description).HasMaxLength(8000);
-        b.Property(x => x.Status).HasConversion<int>().IsRequired();
+        b.Property(x => x.WorkflowStateId).IsRequired();
         b.Property(x => x.Type).HasConversion<int>().IsRequired();
         b.Property(x => x.Priority).HasConversion<int>().IsRequired();
         // Free-text labels → Postgres text[] (Npgsql primitive collection),
@@ -33,9 +33,10 @@ public sealed class IssueConfiguration : IEntityTypeConfiguration<Issue>
         b.Property(x => x.UpdatedAt).IsRequired();
         b.Property(x => x.SprintId);
         b.HasIndex(x => new { x.ProjectId, x.Number }).IsUnique();
-        b.HasIndex(x => new { x.ProjectId, x.Status });
+        b.HasIndex(x => new { x.ProjectId, x.WorkflowStateId });
         b.HasIndex(x => new { x.ProjectId, x.Type });
         b.HasIndex(x => x.SprintId);
+        b.HasIndex(x => x.WorkflowStateId);
 
         // Postgres FTS: generated tsvector column (weighted: title = A, description = B)
         // with a GIN index for fast indexed search.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-using ProjectJA.Modules.Issues.Domain;
+using ProjectJA.Modules.Workflows.Domain;
 
 namespace ProjectJA.Modules.Issues.Contracts;
 
@@ -10,7 +10,9 @@ public sealed record IssueSearchHit(
     int Number,
     string Title,
     string? Description,
-    IssueStatus Status,
+    Guid WorkflowStateId,
+    string WorkflowStateName,
+    WorkflowStateCategory WorkflowStateCategory,
     double Rank);
 
 public interface IIssueSearch

@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\ProjectJA.SharedKernel\ProjectJA.SharedKernel.csproj" />
     <ProjectReference Include="..\ProjectJA.Modules.Projects\ProjectJA.Modules.Projects.csproj" />
+    <ProjectReference Include="..\ProjectJA.Modules.Workflows\ProjectJA.Modules.Workflows.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

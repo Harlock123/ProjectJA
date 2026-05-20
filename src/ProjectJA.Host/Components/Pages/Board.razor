@@ -8,6 +8,8 @@
 @using System.Security.Claims
 @using ProjectJA.Modules.Projects.Contracts
 @using ProjectJA.Modules.Projects.Domain
+@using ProjectJA.Modules.Workflows.Contracts
+@using ProjectJA.Modules.Workflows.Domain
 @inject AppDbContext Db
 @inject IClock Clock
 @inject ITenantContext Tenant
@@ -18,6 +20,7 @@
 @inject AuthenticationStateProvider Auth
 @inject IProjectQueries Projects
 @inject ISprintQueries SprintsQueries
+@inject IWorkflowQueries WorkflowsQueries
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
@@ -52,15 +55,15 @@ else
     </MudStack>
 
     <MudGrid Spacing="2">
-        @foreach (var col in Columns)
+        @foreach (var col in _workflow?.States.OrderBy(s => s.Order) ?? Enumerable.Empty<WorkflowStateView>())
         {
-            <MudItem xs="12" sm="4">
+            <MudItem xs="12" sm="@(12 / Math.Max(1, _workflow!.States.Count))">
                 <div class="board-column"
-                     data-status="@((int)col)"
-                     style="@($"min-height:24rem;background:{ColumnBackground(col)};border:1px solid {LaneBorder()};border-radius:6px;padding:0.5rem;")">
-                    <MudText Typo="Typo.subtitle1" Style="font-weight:600;" Class="px-1 pb-2">@col</MudText>
+                     data-state-id="@col.Id"
+                     style="@($"min-height:24rem;background:{ColumnBackground(col.Category)};border:1px solid {LaneBorder()};border-radius:6px;padding:0.5rem;")">
+                    <MudText Typo="Typo.subtitle1" Style="font-weight:600;" Class="px-1 pb-2">@col.Name</MudText>
 
-                    @foreach (var issue in IssuesIn(col))
+                    @foreach (var issue in IssuesIn(col.Id))
                     {
                         <div draggable="@(_canWrite ? "true" : "false")"
                              data-issue-id="@issue.Id"
@@ -112,11 +115,11 @@ else
 
 @code {
     [Parameter] public Guid ProjectId { get; set; }
-    private static readonly IssueStatus[] Columns = [IssueStatus.Todo, IssueStatus.Doing, IssueStatus.Done];
 
     private Project? _project;
     private bool _canWrite;
     private List<Issue> _issues = new();
+    private WorkflowView? _workflow;
     private IReadOnlyList<SprintSummary> _sprints = Array.Empty<SprintSummary>();
     private Dictionary<Guid, string> _sprintNames = new();
     // Filter value conventions: "all" | "backlog" | "<sprint-guid>".
@@ -166,6 +169,7 @@ else
             .Where(i => i.ProjectId == ProjectId)
             .OrderBy(i => i.Number)
             .ToListAsync();
+        _workflow = await WorkflowsQueries.GetForProjectAsync(ProjectId, default);
         _sprints = await SprintsQueries.ListForProjectAsync(ProjectId, default);
         _sprintNames = _sprints.ToDictionary(s => s.Id, s => s.Name);
         // Default filter: the active sprint if there is one — that's almost
@@ -185,26 +189,26 @@ else
         _ => items,
     };
 
-    private IEnumerable<Issue> IssuesIn(IssueStatus column) =>
-        ApplyFilter(_issues).Where(i => i.Status == column);
+    private IEnumerable<Issue> IssuesIn(Guid stateId) =>
+        ApplyFilter(_issues).Where(i => i.WorkflowStateId == stateId);
 
-    // Light lanes are near-white tints; in dark mode those glare, so swap to
-    // muted dark tints that keep the same Todo/Doing/Done hue cue. (A literal
-    // 30% darken of a near-white still reads as bright on a dark page — these
-    // are tuned dark values; adjust the hexes here to taste.)
-    private string ColumnBackground(IssueStatus col) => ThemeState.IsDark
-        ? col switch
+    // Lane tints by Category — the workflow can have any number of states with
+    // custom names, but they always fall into Open / InProgress / Done buckets,
+    // so the tint cue stays consistent across projects. (Light = near-white;
+    // dark = muted dark, since a literal darken of near-white still glares.)
+    private string ColumnBackground(WorkflowStateCategory cat) => ThemeState.IsDark
+        ? cat switch
         {
-            IssueStatus.Todo => "#26262e",
-            IssueStatus.Doing => "#2e2a1c",
-            IssueStatus.Done => "#1e2b22",
+            WorkflowStateCategory.Open => "#26262e",
+            WorkflowStateCategory.InProgress => "#2e2a1c",
+            WorkflowStateCategory.Done => "#1e2b22",
             _ => "#26262e",
         }
-        : col switch
+        : cat switch
         {
-            IssueStatus.Todo => "#fafafa",
-            IssueStatus.Doing => "#fff8e1",
-            IssueStatus.Done => "#e8f5e9",
+            WorkflowStateCategory.Open => "#fafafa",
+            WorkflowStateCategory.InProgress => "#fff8e1",
+            WorkflowStateCategory.Done => "#e8f5e9",
             _ => "#fafafa",
         };
 
@@ -227,19 +231,20 @@ else
     private string CardDescColor() => ThemeState.IsDark ? "#a0a0ab" : "#6a6a6a";
 
     [JSInvokable]
-    public async Task OnCardDropped(string issueId, int statusInt)
+    public async Task OnCardDropped(string issueId, string stateId)
     {
         // Defense-in-depth: cards aren't draggable for Viewers, but a tampered
         // client could still invoke this. The API PATCH also re-checks the role.
         if (!_canWrite) return;
-        if (!Guid.TryParse(issueId, out var id)) return;
-        if (!Enum.IsDefined(typeof(IssueStatus), statusInt)) return;
-        var target = (IssueStatus)statusInt;
+        if (!Guid.TryParse(issueId, out var iid)) return;
+        if (!Guid.TryParse(stateId, out var sid)) return;
+        // Target state must belong to this project's workflow.
+        if (_workflow?.States.Any(s => s.Id == sid) != true) return;
 
-        var issue = await Db.Issues.FirstOrDefaultAsync(i => i.Id == id);
-        if (issue is null || issue.Status == target) return;
+        var issue = await Db.Issues.FirstOrDefaultAsync(i => i.Id == iid);
+        if (issue is null || issue.WorkflowStateId == sid) return;
 
-        issue.Transition(target, Clock.UtcNow);
+        issue.Transition(sid, Clock.UtcNow);
         await Db.SaveChangesAsync();
 
         if (_groupName is not null)
@@ -247,7 +252,7 @@ else
             await EventStream.PublishAsync(
                 _groupName,
                 "IssueMoved",
-                new { issueId = issue.Id, projectId = issue.ProjectId, status = (int)issue.Status });
+                new { issueId = issue.Id, projectId = issue.ProjectId, workflowStateId = issue.WorkflowStateId });
         }
 
         await ReloadAsync();
@@ -274,7 +279,7 @@ else
                 await EventStream.PublishAsync(
                     _groupName,
                     "IssueMoved",
-                    new { issueId = edited.Id, projectId = edited.ProjectId, status = (int)edited.Status });
+                    new { issueId = edited.Id, projectId = edited.ProjectId, workflowStateId = edited.WorkflowStateId });
         }
     }
 

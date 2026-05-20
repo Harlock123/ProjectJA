@@ -2,10 +2,12 @@
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @rendermode InteractiveServer
 @using System.Security.Claims
+@using ProjectJA.Modules.Workflows.Contracts
 @inject AppDbContext Db
 @inject IClock Clock
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider Auth
+@inject IWorkflowSeeder WorkflowSeeder
 
 <PageTitle>Projects</PageTitle>
 
@@ -120,6 +122,10 @@
         var p = Project.Create(org.Id, _draft.Key, _draft.Name, _draft.Description, _currentUserId, Clock.UtcNow);
         Db.Projects.Add(p);
         await Db.SaveChangesAsync();
+        // Seed the default workflow (Todo/Doing/Done) so the project's first
+        // issue has a state to start in. Idempotent — safe if the route is
+        // re-entered.
+        await WorkflowSeeder.EnsureDefaultForProjectAsync(p.Id, Clock.UtcNow, default);
         _draft = new();
         await ReloadAsync();
     }

@@ -5,6 +5,8 @@
 @using ProjectJA.Modules.Identity.Contracts
 @using ProjectJA.Modules.Projects.Contracts
 @using ProjectJA.Modules.Projects.Domain
+@using ProjectJA.Modules.Workflows.Contracts
+@using ProjectJA.Modules.Workflows.Domain
 @using ProjectJA.Host.Components.Dialogs
 @inject AppDbContext Db
 @inject IClock Clock
@@ -13,6 +15,7 @@
 @inject IUserQueries Users
 @inject IProjectQueries Projects
 @inject ISprintQueries SprintsQueries
+@inject IWorkflowQueries WorkflowsQueries
 @inject IDialogService DialogService
 
 <PageTitle>@(_project?.Name ?? "Project")</PageTitle>
@@ -30,6 +33,8 @@ else
         <MudSpacer />
         <MudButton OnClick="OpenMembersAsync" Variant="Variant.Outlined" Color="Color.Primary"
                    StartIcon="@Icons.Material.Filled.Group" Class="mr-2">Membership</MudButton>
+        <MudButton Href="@($"/projects/{ProjectId}/workflow")" Variant="Variant.Outlined" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.AccountTree" Class="mr-2">Workflow</MudButton>
         <MudButton Href="@($"/projects/{ProjectId}/sprints")" Variant="Variant.Outlined" Color="Color.Primary"
                    StartIcon="@Icons.Material.Filled.Loop" Class="mr-2">Sprints</MudButton>
         <MudButton Href="@($"/projects/{ProjectId}/board")" Variant="Variant.Outlined" Color="Color.Primary"
@@ -88,17 +93,20 @@ else
                             </MudTd>
                             <MudTd>@(context.Points?.ToString() ?? "—")</MudTd>
                             <MudTd>
-                                @if (_canWrite)
+                                @if (_canWrite && _workflow is not null)
                                 {
-                                    <MudSelect T="IssueStatus" Value="context.Status" ValueChanged="@(v => TransitionAsync(context, v))" Dense="true" Margin="Margin.Dense">
-                                        <MudSelectItem Value="IssueStatus.Todo">Todo</MudSelectItem>
-                                        <MudSelectItem Value="IssueStatus.Doing">Doing</MudSelectItem>
-                                        <MudSelectItem Value="IssueStatus.Done">Done</MudSelectItem>
+                                    <MudSelect T="Guid" Value="context.WorkflowStateId"
+                                               ValueChanged="@(v => TransitionAsync(context, v))"
+                                               Dense="true" Margin="Margin.Dense">
+                                        @foreach (var s in _workflow.States.OrderBy(s => s.Order))
+                                        {
+                                            <MudSelectItem Value="@s.Id">@s.Name</MudSelectItem>
+                                        }
                                     </MudSelect>
                                 }
                                 else
                                 {
-                                    <MudText Typo="Typo.body2">@context.Status</MudText>
+                                    <MudText Typo="Typo.body2">@(_stateNames.GetValueOrDefault(context.WorkflowStateId, "—"))</MudText>
                                 }
                             </MudTd>
                             <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@context.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</MudText></MudTd>
@@ -200,6 +208,8 @@ else
     private IReadOnlyList<UserSummary> _users = Array.Empty<UserSummary>();
     private IReadOnlyList<SprintSummary> _sprints = Array.Empty<SprintSummary>();
     private Dictionary<Guid, string> _sprintNames = new();
+    private WorkflowView? _workflow;
+    private Dictionary<Guid, string> _stateNames = new();
     private Guid _currentUserId;
     private ProjectRole? _role;
     private bool _canWrite;
@@ -235,6 +245,8 @@ else
             .OrderBy(i => i.Number)
             .ToListAsync();
         _users = await Users.ListAllAsync(default);
+        _workflow = await WorkflowsQueries.GetForProjectAsync(ProjectId, default);
+        _stateNames = _workflow?.States.ToDictionary(s => s.Id, s => s.Name) ?? new();
         _sprints = await SprintsQueries.ListForProjectAsync(ProjectId, default);
         _sprintNames = _sprints.ToDictionary(s => s.Id, s => s.Name);
     }
@@ -270,9 +282,20 @@ else
         var createdBy = _currentUserId != Guid.Empty
             ? _currentUserId
             : await Db.Users.Select(u => u.Id).FirstOrDefaultAsync();
+        // Initial state = first Open-category state of the project's workflow
+        // (defaults to "Todo" in the seeded default workflow).
+        if (_workflow is null || _workflow.States.Count == 0)
+        {
+            _error = "Project has no workflow configured.";
+            return;
+        }
+        var initialStateId = _workflow.States.OrderBy(s => s.Order)
+            .FirstOrDefault(s => s.Category == WorkflowStateCategory.Open)?.Id
+            ?? _workflow.States.OrderBy(s => s.Order).First().Id;
         var tracked = await Db.Projects.FirstAsync(p => p.Id == ProjectId);
         var number = tracked.AllocateIssueNumber();
-        var issue = Issue.Create(tracked.Id, number, _draft.Title, _draft.Description, createdBy, Clock.UtcNow);
+        var issue = Issue.Create(tracked.Id, number, _draft.Title, _draft.Description,
+            initialStateId, createdBy, Clock.UtcNow);
         issue.Reclassify(_draft.Type, _draft.Points, null, Clock.UtcNow);
         issue.SetPriority(_draft.Priority, Clock.UtcNow);
         issue.SetLabels(SplitLabels(_draft.Labels), Clock.UtcNow);
@@ -288,11 +311,14 @@ else
         await ReloadAsync();
     }
 
-    private async Task TransitionAsync(Issue issue, IssueStatus newStatus)
+    private async Task TransitionAsync(Issue issue, Guid newStateId)
     {
         if (!_canWrite) return;
+        // Defense-in-depth: target must belong to the project's workflow.
+        if (_workflow?.States.Any(s => s.Id == newStateId) != true) return;
+        if (issue.WorkflowStateId == newStateId) return;
         var tracked = await Db.Issues.FirstAsync(i => i.Id == issue.Id);
-        tracked.Transition(newStatus, Clock.UtcNow);
+        tracked.Transition(newStateId, Clock.UtcNow);
         await Db.SaveChangesAsync();
         await ReloadAsync();
     }

@@ -4,8 +4,9 @@
 //
 // Wired up from Board.razor via:
 //   JSRuntime.InvokeVoidAsync("projectja.board.init", dotnetRef);
-// The Razor page must render .board-column elements with data-status="<int>"
-// and .board-card elements with data-issue-id="<guid>".
+// The Razor page must render .board-column elements with data-state-id="<guid>"
+// (the workflow state's id — boards are now driven by the project's workflow,
+// not a fixed enum) and .board-card elements with data-issue-id="<guid>".
 
 (function () {
     window.projectja = window.projectja || {};
@@ -29,7 +30,7 @@
             });
 
             // Columns: allow drop + dispatch to .NET.
-            document.querySelectorAll('.board-column[data-status]').forEach(col => {
+            document.querySelectorAll('.board-column[data-state-id]').forEach(col => {
                 if (col.dataset.dndBound === '1') return;
                 col.dataset.dndBound = '1';
 
@@ -44,11 +45,11 @@
                 col.addEventListener('drop', async (e) => {
                     e.preventDefault();
                     col.classList.remove('board-column-hover');
-                    const id = e.dataTransfer.getData('text/plain');
-                    const status = parseInt(col.getAttribute('data-status'), 10);
-                    if (!id || Number.isNaN(status)) return;
+                    const issueId = e.dataTransfer.getData('text/plain');
+                    const stateId = col.getAttribute('data-state-id');
+                    if (!issueId || !stateId) return;
                     try {
-                        await dotnetRef.invokeMethodAsync('OnCardDropped', id, status);
+                        await dotnetRef.invokeMethodAsync('OnCardDropped', issueId, stateId);
                     } catch (err) {
                         console.error('Board drop callback failed:', err);
                     }

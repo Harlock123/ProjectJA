@@ -18,5 +18,9 @@ public static class ProjectsModule
     }
 
     public static IEndpointRouteBuilder MapProjectsEndpoints(this IEndpointRouteBuilder app)
-        => ProjectsEndpoints.Map(app);
+    {
+        ProjectsEndpoints.Map(app);
+        WorkflowsEndpoints.Map(app);
+        return app;
+    }
 }

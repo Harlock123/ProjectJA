@@ -44,7 +44,7 @@ else
             <RowTemplate>
                 <MudTd><MudLink Href="@($"/projects/{context.ProjectId}")" Style="font-family:monospace;">@context.ProjectKey-@context.Number</MudLink></MudTd>
                 <MudTd>@context.Title</MudTd>
-                <MudTd>@context.Status</MudTd>
+                <MudTd>@context.WorkflowStateName</MudTd>
                 <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@context.Rank.ToString("0.000")</MudText></MudTd>
             </RowTemplate>
         </MudTable>

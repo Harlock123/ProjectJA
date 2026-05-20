@@ -8,7 +8,11 @@ public sealed class Issue
     public int Number { get; private set; }
     public string Title { get; private set; } = default!;
     public string? Description { get; private set; }
-    public IssueStatus Status { get; private set; }
+    /// <summary>The current state in the project's workflow. Cross-module FK
+    /// (Issues→Workflows): just a Guid, no DB-level FK — same pattern as
+    /// <see cref="ProjectId"/> and <see cref="SprintId"/>. The application
+    /// layer resolves the state's name + category for display/grouping.</summary>
+    public Guid WorkflowStateId { get; private set; }
     public IssueType Type { get; private set; }
     public IssuePriority Priority { get; private set; }
     public int? Points { get; private set; }
@@ -33,14 +37,15 @@ public sealed class Issue
 
     private Issue() { }
 
-    public Issue(Guid id, Guid projectId, int number, string title, string? description, Guid createdById, DateTimeOffset now)
+    public Issue(Guid id, Guid projectId, int number, string title, string? description,
+        Guid initialWorkflowStateId, Guid createdById, DateTimeOffset now)
     {
         Id = id;
         ProjectId = projectId;
         Number = number;
         Title = title;
         Description = description;
-        Status = IssueStatus.Todo;
+        WorkflowStateId = initialWorkflowStateId;
         Type = IssueType.Task;
         Priority = IssuePriority.Medium;
         CreatedById = createdById;
@@ -49,8 +54,9 @@ public sealed class Issue
         UpdatedAt = now;
     }
 
-    public static Issue Create(Guid projectId, int number, string title, string? description, Guid createdById, DateTimeOffset now)
-        => new(Guid.NewGuid(), projectId, number, title, description, createdById, now);
+    public static Issue Create(Guid projectId, int number, string title, string? description,
+        Guid initialWorkflowStateId, Guid createdById, DateTimeOffset now)
+        => new(Guid.NewGuid(), projectId, number, title, description, initialWorkflowStateId, createdById, now);
 
     public void Edit(string title, string? description, DateTimeOffset now)
     {
@@ -59,9 +65,12 @@ public sealed class Issue
         UpdatedAt = now;
     }
 
-    public void Transition(IssueStatus newStatus, DateTimeOffset now)
+    /// <summary>Move the issue to a different workflow state. The application
+    /// layer validates that the target state belongs to this project's workflow;
+    /// the domain just records the transition (any-to-any in this slice).</summary>
+    public void Transition(Guid newWorkflowStateId, DateTimeOffset now)
     {
-        Status = newStatus;
+        WorkflowStateId = newWorkflowStateId;
         UpdatedAt = now;
     }
 

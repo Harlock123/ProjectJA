@@ -3,6 +3,8 @@
 @using ProjectJA.Modules.Issues.Contracts
 @using ProjectJA.Modules.Projects.Contracts
 @using ProjectJA.Modules.Projects.Domain
+@using ProjectJA.Modules.Workflows.Contracts
+@using ProjectJA.Modules.Workflows.Domain
 @using ProjectJA.Host.Hubs
 @using ProjectJA.SharedKernel.Realtime
 @using ProjectJA.SharedKernel.Tenancy
@@ -10,6 +12,7 @@
 @inject IClock Clock
 @inject IProjectQueries Projects
 @inject ISprintQueries SprintsQueries
+@inject IWorkflowQueries WorkflowsQueries
 @inject IUserQueries Users
 @inject IAttachmentService Attachments
 @inject AuthenticationStateProvider Auth
@@ -55,11 +58,11 @@
                                     <MudSelectItem Value="t">@t</MudSelectItem>
                                 }
                             </MudSelect>
-                            <MudSelect T="IssueStatus" Label="Status" @bind-Value="_edit.Status" ReadOnly="@(!_canWrite)"
+                            <MudSelect T="Guid" Label="Status" @bind-Value="_edit.WorkflowStateId" ReadOnly="@(!_canWrite)"
                                        Variant="Variant.Outlined" Dense="true">
-                                @foreach (var s in Enum.GetValues<IssueStatus>())
+                                @foreach (var s in _workflow?.States.OrderBy(s => s.Order) ?? Enumerable.Empty<WorkflowStateView>())
                                 {
-                                    <MudSelectItem Value="s">@s</MudSelectItem>
+                                    <MudSelectItem Value="@s.Id">@s.Name</MudSelectItem>
                                 }
                             </MudSelect>
                             <MudNumericField T="int?" Label="Points" @bind-Value="_edit.Points" ReadOnly="@(!_canWrite)"
@@ -241,6 +244,7 @@
     private bool _changed;
     private bool _canWrite;
     private bool _isAdmin;
+    private WorkflowView? _workflow;
     private IReadOnlyList<SprintSummary> _sprints = Array.Empty<SprintSummary>();
     private Issue? _issue;
     private string? _projectKey;
@@ -289,6 +293,7 @@
                 _canWrite = role?.CanWrite() == true;
                 _isAdmin = role == ProjectRole.Admin;
                 _sprints = await SprintsQueries.ListForProjectAsync(_issue.ProjectId, default);
+                _workflow = await WorkflowsQueries.GetForProjectAsync(_issue.ProjectId, default);
                 _users = await Users.ListAllAsync(default);
                 _userNames = _users.ToDictionary(u => u.Id, u => u.DisplayName);
                 _comments = _issue.Comments.OrderByDescending(c => c.CreatedAt).ToList();
@@ -297,7 +302,7 @@
                     Title = _issue.Title,
                     Description = _issue.Description,
                     Type = _issue.Type,
-                    Status = _issue.Status,
+                    WorkflowStateId = _issue.WorkflowStateId,
                     Priority = _issue.Priority,
                     Points = _issue.Points,
                     AcceptanceCriteria = _issue.AcceptanceCriteria,
@@ -392,8 +397,8 @@
             tracked.Assign(_edit.AssigneeId, Clock.UtcNow);
             if (_edit.ReporterId != Guid.Empty)
                 tracked.SetReporter(_edit.ReporterId, Clock.UtcNow);
-            if (tracked.Status != _edit.Status)
-                tracked.Transition(_edit.Status, Clock.UtcNow);
+            if (tracked.WorkflowStateId != _edit.WorkflowStateId)
+                tracked.Transition(_edit.WorkflowStateId, Clock.UtcNow);
             // Sprint change is Admin-only and only the changed value matters; reject
             // moves into a Completed sprint (the dropdown already filters, but a
             // tampered circuit could submit one).
@@ -639,7 +644,7 @@
         public string Title { get; set; } = "";
         public string? Description { get; set; }
         public IssueType Type { get; set; } = IssueType.Task;
-        public IssueStatus Status { get; set; } = IssueStatus.Todo;
+        public Guid WorkflowStateId { get; set; }
         public IssuePriority Priority { get; set; } = IssuePriority.Medium;
         public int? Points { get; set; }
         public string? AcceptanceCriteria { get; set; }

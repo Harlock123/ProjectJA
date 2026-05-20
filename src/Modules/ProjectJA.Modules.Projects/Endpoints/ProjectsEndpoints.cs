@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using ProjectJA.Modules.Identity.Contracts;
 using ProjectJA.Modules.Projects.Contracts;
 using ProjectJA.Modules.Projects.Domain;
+using ProjectJA.Modules.Workflows.Contracts;
 using ProjectJA.SharedKernel.Audit;
 using ProjectJA.SharedKernel.Time;
 
@@ -74,6 +75,7 @@ internal static class ProjectsEndpoints
             [FromBody] CreateProjectRequest req,
             [FromServices] DbContext db,
             [FromServices] IOrganizationQueries orgs,
+            [FromServices] IWorkflowSeeder workflowSeeder,
             [FromServices] IAuditLog audit,
             [FromServices] IClock clock,
             HttpContext http,
@@ -93,6 +95,10 @@ internal static class ProjectsEndpoints
             var project = Project.Create(org.Id, req.Key, req.Name, req.Description, createdBy, clock.UtcNow);
             db.Set<Project>().Add(project);
             await db.SaveChangesAsync(ct);
+
+            // Seed the default workflow (Todo/Doing/Done) so the new project
+            // has a status pipeline ready for its first issue.
+            await workflowSeeder.EnsureDefaultForProjectAsync(project.Id, clock.UtcNow, ct);
 
             await audit.RecordAsync(new AuditEntry(
                 Action: "project.created",
