@@ -11,9 +11,22 @@
 
 <PageTitle>System Versioning</PageTitle>
 
-<MudStack Row="true" AlignItems="AlignItems.Baseline" Class="mb-4">
+@* AlignItems.Center (not Baseline) — MudTooltip wraps the API-docs button in
+   an extra layout element whose baseline differs from a bare MudButton's, so
+   baseline alignment made the two header buttons sit at slightly different
+   heights. Centering aligns them robustly regardless of tooltip wrapping. *@
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-4">
     <MudText Typo="Typo.h4">System Versioning</MudText>
     <MudSpacer />
+    @* Scalar is served same-origin at /scalar/v1, so the user's current auth
+       cookie flows through automatically — "Try it" calls just work as the
+       signed-in user, no extra plumbing. Opens in a new tab so the user
+       doesn't lose this page. *@
+    <MudTooltip Text="Open the interactive API docs (Scalar) using your current login.">
+        <MudButton Href="/scalar/v1" Target="_blank"
+                   Variant="Variant.Outlined" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Api">API docs</MudButton>
+    </MudTooltip>
     <MudButton OnClick="ReloadAsync" Variant="Variant.Outlined" Color="Color.Primary"
                StartIcon="@Icons.Material.Filled.Refresh">Refresh</MudButton>
 </MudStack>

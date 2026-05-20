@@ -130,6 +130,33 @@ builder.Services.ConfigureApplicationCookie(opts =>
     opts.LoginPath = "/login";
     opts.LogoutPath = "/logout";
     opts.AccessDeniedPath = "/access-denied";
+
+    // Cookie-auth's default Challenge is a 302 to LoginPath — great for
+    // browsers hitting protected pages, wrong for REST callers (who want
+    // 401 / 403 they can act on). Branch on path: /api/* gets the API
+    // answer, everything else keeps the browser-friendly redirect. Closes
+    // the long-standing 302-vs-401 asymmetry between anonymous GETs and
+    // anonymous mutating verbs.
+    opts.Events.OnRedirectToLogin = ctx =>
+    {
+        if (ctx.Request.Path.StartsWithSegments("/api"))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return Task.CompletedTask;
+        }
+        ctx.Response.Redirect(ctx.RedirectUri);
+        return Task.CompletedTask;
+    };
+    opts.Events.OnRedirectToAccessDenied = ctx =>
+    {
+        if (ctx.Request.Path.StartsWithSegments("/api"))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return Task.CompletedTask;
+        }
+        ctx.Response.Redirect(ctx.RedirectUri);
+        return Task.CompletedTask;
+    };
 });
 
 builder.Services.AddAuthorization();
