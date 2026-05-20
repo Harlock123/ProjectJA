@@ -398,7 +398,16 @@
             if (_edit.ReporterId != Guid.Empty)
                 tracked.SetReporter(_edit.ReporterId, Clock.UtcNow);
             if (tracked.WorkflowStateId != _edit.WorkflowStateId)
+            {
+                if (_workflow is not null && !_workflow.IsTransitionAllowed(tracked.WorkflowStateId, _edit.WorkflowStateId))
+                {
+                    var from = _workflow.States.FirstOrDefault(s => s.Id == tracked.WorkflowStateId)?.Name ?? "?";
+                    var to = _workflow.States.FirstOrDefault(s => s.Id == _edit.WorkflowStateId)?.Name ?? "?";
+                    _error = $"Workflow doesn't allow moving from \"{from}\" to \"{to}\".";
+                    return;
+                }
                 tracked.Transition(_edit.WorkflowStateId, Clock.UtcNow);
+            }
             // Sprint change is Admin-only and only the changed value matters; reject
             // moves into a Completed sprint (the dropdown already filters, but a
             // tampered circuit could submit one).

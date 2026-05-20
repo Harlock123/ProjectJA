@@ -21,6 +21,7 @@
 @inject IProjectQueries Projects
 @inject ISprintQueries SprintsQueries
 @inject IWorkflowQueries WorkflowsQueries
+@inject ISnackbar Snackbar
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
@@ -243,6 +244,18 @@ else
 
         var issue = await Db.Issues.FirstOrDefaultAsync(i => i.Id == iid);
         if (issue is null || issue.WorkflowStateId == sid) return;
+
+        // Honor the workflow's transition matrix. The API PATCH enforces this
+        // too; the UI check just gives the user immediate feedback before the
+        // round trip.
+        if (_workflow is not null && !_workflow.IsTransitionAllowed(issue.WorkflowStateId, sid))
+        {
+            var from = _workflow.States.FirstOrDefault(s => s.Id == issue.WorkflowStateId)?.Name ?? "?";
+            var to = _workflow.States.FirstOrDefault(s => s.Id == sid)?.Name ?? "?";
+            Snackbar.Add($"Workflow doesn't allow moving from \"{from}\" to \"{to}\".", Severity.Warning);
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
 
         issue.Transition(sid, Clock.UtcNow);
         await Db.SaveChangesAsync();

@@ -21,6 +21,9 @@ internal sealed class WorkflowQueries(DbContext db) : IWorkflowQueries
             wf.Id, wf.ProjectId, wf.Name, wf.IsDefault, wf.CreatedAt,
             wf.States.OrderBy(s => s.Order)
                 .Select(s => new WorkflowStateView(s.Id, s.Name, s.Order, s.Category))
+                .ToList(),
+            wf.Transitions
+                .Select(t => new WorkflowTransitionView(t.FromStateId, t.ToStateId))
                 .ToList());
     }
 

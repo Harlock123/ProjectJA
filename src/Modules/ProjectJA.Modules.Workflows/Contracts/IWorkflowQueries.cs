@@ -9,13 +9,23 @@ public sealed record WorkflowStateView(
     int Order,
     WorkflowStateCategory Category);
 
+public sealed record WorkflowTransitionView(Guid FromStateId, Guid ToStateId);
+
 public sealed record WorkflowView(
     Guid Id,
     Guid ProjectId,
     string Name,
     bool IsDefault,
     DateTimeOffset CreatedAt,
-    IReadOnlyList<WorkflowStateView> States);
+    IReadOnlyList<WorkflowStateView> States,
+    IReadOnlyList<WorkflowTransitionView> Transitions)
+{
+    /// <summary>Allowed-move check matching <c>Workflow.IsTransitionAllowed</c>;
+    /// callers that already loaded the view can ask without another round trip.</summary>
+    public bool IsTransitionAllowed(Guid fromStateId, Guid toStateId) =>
+        fromStateId == toStateId
+        || Transitions.Any(t => t.FromStateId == fromStateId && t.ToStateId == toStateId);
+}
 
 public interface IWorkflowQueries
 {

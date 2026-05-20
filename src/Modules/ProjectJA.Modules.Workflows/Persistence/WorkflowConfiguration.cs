@@ -29,5 +29,18 @@ public sealed class WorkflowConfiguration : IEntityTypeConfiguration<Workflow>
             s.HasIndex(x => x.WorkflowId);
             s.HasIndex(x => new { x.WorkflowId, x.Order });
         });
+
+        // Owned allowed-transition pairs. UNIQUE (WorkflowId, From, To) so the
+        // matrix can't have duplicates; same-state pairs never inserted by the
+        // domain so the constraint is "directional unique" only.
+        b.OwnsMany(x => x.Transitions, t =>
+        {
+            t.ToTable("workflow_transitions");
+            t.WithOwner().HasForeignKey(x => x.WorkflowId);
+            t.HasKey(x => x.Id);
+            t.Property(x => x.FromStateId).IsRequired();
+            t.Property(x => x.ToStateId).IsRequired();
+            t.HasIndex(x => new { x.WorkflowId, x.FromStateId, x.ToStateId }).IsUnique();
+        });
     }
 }

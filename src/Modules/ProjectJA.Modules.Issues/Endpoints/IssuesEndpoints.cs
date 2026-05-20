@@ -252,6 +252,12 @@ internal static class IssuesEndpoints
 
             var oldStateId = issue.WorkflowStateId;
             var oldState = wf!.States.FirstOrDefault(s => s.Id == oldStateId);
+            // Enforce the workflow's transition matrix. Same-state is OK
+            // (no-op, handled by IsTransitionAllowed) — useful for idempotent
+            // PATCHes.
+            if (!wf.IsTransitionAllowed(oldStateId, req.WorkflowStateId))
+                return Results.Conflict(new { error = $"Workflow doesn't allow moving from \"{oldState?.Name ?? "?"}\" to \"{target.Name}\"." });
+
             issue.Transition(req.WorkflowStateId, clock.UtcNow);
             await db.SaveChangesAsync(ct);
 
@@ -279,7 +285,8 @@ internal static class IssuesEndpoints
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden)
-        .Produces(StatusCodes.Status404NotFound);
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict);
 
         // Assign/clear sprint on an issue — Admin only (matches sprint authority).
         // Null sprintId moves the issue back to backlog. The target sprint must

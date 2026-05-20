@@ -120,6 +120,76 @@ else
             @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert> }
         </MudPaper>
 
+        @* --- Transition matrix --- *@
+        <MudPaper Class="pa-4 mb-4" Elevation="1">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                <MudText Typo="Typo.h6">Allowed transitions</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Default">
+                    Row = from state, column = to state. @(_isAdmin ? "Uncheck to forbid a move." : "")
+                </MudText>
+                <MudSpacer />
+                @if (_isAdmin)
+                {
+                    <MudButton OnClick="SaveTransitionsAsync" Variant="Variant.Filled" Color="Color.Primary"
+                               Disabled="@(!_transitionsDirty)"
+                               StartIcon="@Icons.Material.Filled.Save">Save transitions</MudButton>
+                }
+            </MudStack>
+            @{
+                var ordered = _workflow.States.OrderBy(s => s.Order).ToList();
+            }
+            @if (ordered.Count == 0)
+            {
+                <MudText Color="Color.Default">No states.</MudText>
+            }
+            else
+            {
+                <div style="overflow-x:auto;">
+                    <table class="mud-table-root" style="border-collapse:collapse;">
+                        <thead>
+                            <tr>
+                                <th style="padding:0.5rem;border-bottom:1px solid #ddd;text-align:left;">From \ To</th>
+                                @foreach (var to in ordered)
+                                {
+                                    <th style="padding:0.5rem;border-bottom:1px solid #ddd;">@to.Name</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var from in ordered)
+                            {
+                                <tr>
+                                    <th style="padding:0.5rem;text-align:left;border-right:1px solid #ddd;font-weight:600;">@from.Name</th>
+                                    @foreach (var to in ordered)
+                                    {
+                                        <td style="text-align:center;padding:0.25rem;">
+                                            @if (from.Id == to.Id)
+                                            {
+                                                <span style="color:#bbb;">—</span>
+                                            }
+                                            else if (_isAdmin)
+                                            {
+                                                <MudCheckBox T="bool"
+                                                             Value="@_allowedPairs.Contains((from.Id, to.Id))"
+                                                             ValueChanged="@((bool v) => ToggleTransition(from.Id, to.Id, v))" />
+                                            }
+                                            else
+                                            {
+                                                <MudIcon Icon="@(_allowedPairs.Contains((from.Id, to.Id)) ? Icons.Material.Filled.Check : Icons.Material.Filled.Block)"
+                                                         Size="Size.Small"
+                                                         Color="@(_allowedPairs.Contains((from.Id, to.Id)) ? Color.Success : Color.Default)" />
+                                            }
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            @if (_transitionsError is not null) { <MudAlert Severity="Severity.Error" Class="mt-3">@_transitionsError</MudAlert> }
+        </MudPaper>
+
         @if (_isAdmin)
         {
             <MudPaper Class="pa-4" Elevation="1">
@@ -161,6 +231,14 @@ else
     private string _newName = "";
     private WorkflowStateCategory _newCategory = WorkflowStateCategory.Open;
 
+    // Transition-matrix scratch state. _allowedPairs is the editable copy of
+    // the workflow's pairs; we compare against the loaded view to decide
+    // whether the Save button is enabled.
+    private HashSet<(Guid From, Guid To)> _allowedPairs = new();
+    private HashSet<(Guid From, Guid To)> _originalPairs = new();
+    private bool _transitionsDirty;
+    private string? _transitionsError;
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await Auth.GetAuthenticationStateAsync();
@@ -184,6 +262,42 @@ else
             .GroupBy(i => i.WorkflowStateId)
             .Select(g => new { sid = g.Key, count = g.Count() })
             .ToDictionaryAsync(x => x.sid, x => x.count);
+        // Snapshot the transitions for the matrix.
+        _originalPairs = _workflow.Transitions.Select(t => (t.FromStateId, t.ToStateId)).ToHashSet();
+        _allowedPairs = new HashSet<(Guid, Guid)>(_originalPairs);
+        _transitionsDirty = false;
+        _transitionsError = null;
+    }
+
+    private void ToggleTransition(Guid from, Guid to, bool allow)
+    {
+        if (allow) _allowedPairs.Add((from, to));
+        else _allowedPairs.Remove((from, to));
+        _transitionsDirty = !_allowedPairs.SetEquals(_originalPairs);
+    }
+
+    private async Task SaveTransitionsAsync()
+    {
+        if (_workflow is null) return;
+        _transitionsError = null;
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Set<Workflow>().FirstAsync(w => w.Id == _workflow.Id);
+            tracked.SetTransitions(_allowedPairs.ToList());
+            // Same owned-Guid-key trap: force-Added on the new pairs after
+            // Clear() so EF emits INSERTs instead of misclassified UPDATEs.
+            foreach (var t in tracked.Transitions)
+                db.Entry(t).State = EntityState.Added;
+            await db.SaveChangesAsync();
+
+            await AuditAsync("workflow.transitions.updated",
+                $"Updated workflow transitions — {tracked.Transitions.Count} allowed pair(s)",
+                new { workflowId = _workflow.Id, count = tracked.Transitions.Count });
+
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _transitionsError = ex.Message; }
     }
 
     private void StartEdit(WorkflowStateView s)

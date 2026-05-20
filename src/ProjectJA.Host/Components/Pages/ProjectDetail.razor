@@ -317,6 +317,15 @@ else
         // Defense-in-depth: target must belong to the project's workflow.
         if (_workflow?.States.Any(s => s.Id == newStateId) != true) return;
         if (issue.WorkflowStateId == newStateId) return;
+        // Honor the workflow's transition matrix; same as REST PATCH /status.
+        if (!_workflow.IsTransitionAllowed(issue.WorkflowStateId, newStateId))
+        {
+            var from = _workflow.States.FirstOrDefault(s => s.Id == issue.WorkflowStateId)?.Name ?? "?";
+            var to = _workflow.States.FirstOrDefault(s => s.Id == newStateId)?.Name ?? "?";
+            _error = $"Workflow doesn't allow moving from \"{from}\" to \"{to}\".";
+            await ReloadAsync();
+            return;
+        }
         var tracked = await Db.Issues.FirstAsync(i => i.Id == issue.Id);
         tracked.Transition(newStateId, Clock.UtcNow);
         await Db.SaveChangesAsync();

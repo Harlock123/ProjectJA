@@ -22,8 +22,13 @@ internal static class WorkflowsEndpoints
     internal sealed record AddStateRequest(string Name, WorkflowStateCategory Category);
     internal sealed record UpdateStateRequest(string Name, WorkflowStateCategory Category);
     internal sealed record ReorderRequest(IReadOnlyList<Guid> StateIds);
+    internal sealed record TransitionPair(Guid From, Guid To);
+    internal sealed record SetTransitionsRequest(IReadOnlyList<TransitionPair> Pairs);
     internal sealed record StateDto(Guid Id, string Name, int Order, WorkflowStateCategory Category);
-    internal sealed record WorkflowDto(Guid Id, Guid ProjectId, string Name, bool IsDefault, IReadOnlyList<StateDto> States);
+    internal sealed record TransitionDto(Guid FromStateId, Guid ToStateId);
+    internal sealed record WorkflowDto(Guid Id, Guid ProjectId, string Name, bool IsDefault,
+        IReadOnlyList<StateDto> States,
+        IReadOnlyList<TransitionDto> Transitions);
 
     internal static IEndpointRouteBuilder Map(IEndpointRouteBuilder app)
     {
@@ -41,7 +46,8 @@ internal static class WorkflowsEndpoints
             return wf is null
                 ? Results.NotFound()
                 : Results.Ok(new WorkflowDto(wf.Id, wf.ProjectId, wf.Name, wf.IsDefault,
-                    wf.States.Select(s => new StateDto(s.Id, s.Name, s.Order, s.Category)).ToList()));
+                    wf.States.Select(s => new StateDto(s.Id, s.Name, s.Order, s.Category)).ToList(),
+                    wf.Transitions.Select(t => new TransitionDto(t.FromStateId, t.ToStateId)).ToList()));
         })
         .RequireAuthorization()
         .WithName("GetProjectWorkflow")
@@ -210,6 +216,55 @@ internal static class WorkflowsEndpoints
         .RequireAuthorization()
         .WithName("ReorderWorkflowStates")
         .WithSummary("Apply a new state ordering to a workflow (Admin only)")
+        .WithTags("Workflows")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound);
+
+        // Replace the full set of allowed transitions — Admin only. Body lists
+        // every allowed pair; anything not in the list becomes disallowed.
+        // Same-state pairs are silently dropped; duplicates deduped.
+        app.MapPut("/api/workflows/{workflowId:guid}/transitions", async (
+            Guid workflowId,
+            [FromBody] SetTransitionsRequest req,
+            [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
+            [FromServices] IAuditLog audit,
+            HttpContext http,
+            CancellationToken ct) =>
+        {
+            var wf = await db.Set<Workflow>().FirstOrDefaultAsync(w => w.Id == workflowId, ct);
+            if (wf is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, wf.ProjectId, ProjectRole.Admin, ct);
+            if (auth.Denied) return auth.Failure!;
+            try
+            {
+                wf.SetTransitions(req.Pairs.Select(p => (p.From, p.To)).ToList());
+            }
+            catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            // Same trap as Comments/ProjectMember/Sprint-state/Workflow-state:
+            // owned children with domain-set Guid keys default to Modified
+            // (UPDATE → 0 rows). The Clear() inside SetTransitions handles
+            // deletions; force-INSERT the new pairs here. Safe because Clear
+            // emits DELETE for the old rows, the unique key is (WorkflowId,
+            // From, To) not Id — re-adding the same pair with a new Id is OK.
+            foreach (var t in wf.Transitions)
+                db.Entry(t).State = EntityState.Added;
+            await db.SaveChangesAsync(ct);
+
+            await audit.RecordAsync(new AuditEntry(
+                Action: "workflow.transitions.updated",
+                ResourceType: "Project",
+                ResourceId: wf.ProjectId.ToString(),
+                Summary: $"Updated workflow transitions — {wf.Transitions.Count} allowed pair(s)",
+                Detail: new { workflowId = wf.Id, count = wf.Transitions.Count }), ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization()
+        .WithName("UpdateWorkflowTransitions")
+        .WithSummary("Replace the allowed transition set for a workflow (Admin only)")
         .WithTags("Workflows")
         .Produces(StatusCodes.Status204NoContent)
         .Produces(StatusCodes.Status400BadRequest)
