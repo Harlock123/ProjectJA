@@ -29,6 +29,10 @@
                 <MudButton Href="/audit" Variant="Variant.Text" Color="Color.Inherit">Audit</MudButton>
                 <MudButton Href="/admin/email-outbox" Variant="Variant.Text" Color="Color.Inherit">Outbox</MudButton>
                 <MudButton Href="/admin/oidc-settings" Variant="Variant.Text" Color="Color.Inherit">SSO</MudButton>
+                <MudTooltip Text="Runtime, app, database & loaded-library versions">
+                    <MudButton Href="/system/versioning" Variant="Variant.Text" Color="Color.Inherit"
+                               StartIcon="@Icons.Material.Filled.Info">System</MudButton>
+                </MudTooltip>
 
                 <form method="get" action="/search" style="margin: 0 0.5rem;">
                     <input type="text" name="q" placeholder="Search issues…"

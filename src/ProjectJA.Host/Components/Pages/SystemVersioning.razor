@@ -1,0 +1,262 @@
+@page "/system/versioning"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using System.Diagnostics
+@using System.Reflection
+@using System.Runtime.InteropServices
+@using Microsoft.EntityFrameworkCore
+@using Npgsql
+@inject AppDbContext Db
+@inject IWebHostEnvironment Env
+
+<PageTitle>System Versioning</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Baseline" Class="mb-4">
+    <MudText Typo="Typo.h4">System Versioning</MudText>
+    <MudSpacer />
+    <MudButton OnClick="ReloadAsync" Variant="Variant.Outlined" Color="Color.Primary"
+               StartIcon="@Icons.Material.Filled.Refresh">Refresh</MudButton>
+</MudStack>
+
+@if (_data is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else
+{
+    <MudGrid Spacing="3">
+        <MudItem xs="12" md="6">
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudText Typo="Typo.h6" GutterBottom="true">Runtime &amp; host</MudText>
+                <MudTable Items="_data.Runtime" Dense="true" Hover="true">
+                    <HeaderContent>
+                        <MudTh Style="width:14rem;">Property</MudTh>
+                        <MudTh>Value</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.Key</MudTd>
+                        <MudTd><span style="font-family:monospace;">@context.Value</span></MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudText Typo="Typo.h6" GutterBottom="true">Application</MudText>
+                <MudTable Items="_data.Application" Dense="true" Hover="true">
+                    <HeaderContent>
+                        <MudTh Style="width:14rem;">Property</MudTh>
+                        <MudTh>Value</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.Key</MudTd>
+                        <MudTd><span style="font-family:monospace;">@context.Value</span></MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12">
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudText Typo="Typo.h6" GutterBottom="true">Database</MudText>
+                <MudTable Items="_data.Database" Dense="true" Hover="true" Class="mb-3">
+                    <HeaderContent>
+                        <MudTh Style="width:14rem;">Property</MudTh>
+                        <MudTh>Value</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.Key</MudTd>
+                        <MudTd><span style="font-family:monospace;">@context.Value</span></MudTd>
+                    </RowTemplate>
+                </MudTable>
+                @if (_data.DbError is not null)
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true">@_data.DbError</MudAlert>
+                }
+                <MudText Typo="Typo.subtitle2" Class="mt-3">Applied EF migrations (@_data.Migrations.Count)</MudText>
+                @if (_data.Migrations.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Default">(none)</MudText>
+                }
+                else
+                {
+                    <MudList T="string" Dense="true">
+                        @foreach (var m in _data.Migrations)
+                        {
+                            <MudListItem T="string" Icon="@Icons.Material.Filled.Storage">
+                                <span style="font-family:monospace;">@m</span>
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12">
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                    <MudText Typo="Typo.h6">Loaded assemblies (@_data.Assemblies.Count)</MudText>
+                    <MudSpacer />
+                    <MudTextField @bind-Value="_filter" Placeholder="Filter…" Variant="Variant.Outlined"
+                                  Margin="Margin.Dense" Style="max-width:18rem;"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" />
+                </MudStack>
+                <MudTable Items="FilteredAssemblies" Dense="true" Hover="true" Striped="true"
+                          FixedHeader="true" Height="40vh">
+                    <HeaderContent>
+                        <MudTh><MudTableSortLabel SortBy="@(new Func<AssemblyRow, object>(x => x.Name))">Name</MudTableSortLabel></MudTh>
+                        <MudTh Style="width:10rem;">
+                            <MudTableSortLabel SortBy="@(new Func<AssemblyRow, object>(x => x.Version ?? string.Empty))">Version</MudTableSortLabel>
+                        </MudTh>
+                        <MudTh>Informational version</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd><span style="font-family:monospace;font-size:0.85rem;">@context.Name</span></MudTd>
+                        <MudTd><span style="font-family:monospace;font-size:0.85rem;">@(context.Version ?? "—")</span></MudTd>
+                        <MudTd><span style="font-family:monospace;font-size:0.8rem;color:#888;">@(context.InformationalVersion ?? "—")</span></MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private SystemInfo? _data;
+    private string _filter = "";
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync() => _data = await GatherAsync();
+
+    private IEnumerable<AssemblyRow> FilteredAssemblies
+    {
+        get
+        {
+            if (_data is null) return Array.Empty<AssemblyRow>();
+            if (string.IsNullOrWhiteSpace(_filter)) return _data.Assemblies;
+            var f = _filter.Trim();
+            return _data.Assemblies.Where(a =>
+                a.Name.Contains(f, StringComparison.OrdinalIgnoreCase)
+                || (a.Version?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (a.InformationalVersion?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false));
+        }
+    }
+
+    // Inline gather (no separate service): the page is the only consumer, and
+    // every field is a small cheap read — runtime info from System.*, one round
+    // trip for the Postgres version + migrations, and an in-process enumeration
+    // of already-loaded assemblies.
+    private async Task<SystemInfo> GatherAsync()
+    {
+        var info = new SystemInfo();
+
+        // ---- Runtime & host ----
+        var proc = Process.GetCurrentProcess();
+        var uptime = DateTime.Now - proc.StartTime;
+        info.Runtime = new()
+        {
+            new("Framework", RuntimeInformation.FrameworkDescription),
+            new(".NET version", Environment.Version.ToString()),
+            new("Runtime ID", RuntimeInformation.RuntimeIdentifier),
+            new("OS", RuntimeInformation.OSDescription),
+            new("OS architecture", RuntimeInformation.OSArchitecture.ToString()),
+            new("Process architecture", RuntimeInformation.ProcessArchitecture.ToString()),
+            new("Machine name", Environment.MachineName),
+            new("User", Environment.UserName),
+            new("Processors", Environment.ProcessorCount.ToString()),
+            new("Working set", $"{proc.WorkingSet64 / (1024 * 1024)} MB"),
+            new("GC heap", $"{GC.GetTotalMemory(forceFullCollection: false) / (1024 * 1024)} MB"),
+            new("Uptime", FormatUptime(uptime)),
+            new("Started at", proc.StartTime.ToString("u")),
+            new("Server time (UTC)", DateTimeOffset.UtcNow.ToString("u")),
+        };
+
+        // ---- Application ----
+        var entry = Assembly.GetEntryAssembly();
+        var asmName = entry?.GetName();
+        info.Application = new()
+        {
+            new("Entry assembly", asmName?.Name ?? "—"),
+            new("Assembly version", asmName?.Version?.ToString() ?? "—"),
+            new("File version", entry?.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version ?? "—"),
+            new("Informational version", entry?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "—"),
+            new("Product", entry?.GetCustomAttribute<AssemblyProductAttribute>()?.Product ?? "—"),
+            new("Environment", Env.EnvironmentName),
+            new("Content root", Env.ContentRootPath),
+            new("Web root", Env.WebRootPath),
+        };
+
+        // ---- Database ----
+        var conn = (NpgsqlConnection)Db.Database.GetDbConnection();
+        var csb = new NpgsqlConnectionStringBuilder(conn.ConnectionString);
+        var dbRows = new List<KeyValue>
+        {
+            new("Provider", Db.Database.ProviderName ?? "—"),
+            new("Host", csb.Host ?? "—"),
+            new("Port", csb.Port.ToString()),
+            new("Database", csb.Database ?? "—"),
+            new("Username", csb.Username ?? "—"),
+            new("SSL mode", csb.SslMode.ToString()),
+        };
+        try
+        {
+            if (conn.State != System.Data.ConnectionState.Open)
+                await conn.OpenAsync();
+            dbRows.Add(new("PostgreSQL version", conn.PostgreSqlVersion.ToString()));
+            dbRows.Add(new("Server version (raw)", conn.ServerVersion));
+            // Latest applied migration timestamp from the history table — useful
+            // alongside the migration list below.
+            var migs = (await Db.Database.GetAppliedMigrationsAsync()).ToList();
+            info.Migrations = migs;
+        }
+        catch (Exception ex)
+        {
+            info.DbError = $"Couldn't query database: {ex.Message}";
+        }
+        info.Database = dbRows;
+
+        // ---- Loaded assemblies ----
+        // Filter out dynamic/anonymous ones (no Location) and the BCL noise that
+        // crowds the list. Keep System.* but drop most low-level ones.
+        info.Assemblies = AppDomain.CurrentDomain.GetAssemblies()
+            .Where(a => !a.IsDynamic && !string.IsNullOrWhiteSpace(SafeLocation(a)))
+            .Select(a =>
+            {
+                var n = a.GetName();
+                return new AssemblyRow(
+                    Name: n.Name ?? "(unknown)",
+                    Version: n.Version?.ToString(),
+                    InformationalVersion: a.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion);
+            })
+            .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return info;
+    }
+
+    private static string SafeLocation(Assembly a) { try { return a.Location; } catch { return ""; } }
+
+    private static string FormatUptime(TimeSpan t)
+    {
+        if (t.TotalDays >= 1) return $"{(int)t.TotalDays}d {t.Hours}h {t.Minutes}m";
+        if (t.TotalHours >= 1) return $"{(int)t.TotalHours}h {t.Minutes}m {t.Seconds}s";
+        if (t.TotalMinutes >= 1) return $"{(int)t.TotalMinutes}m {t.Seconds}s";
+        return $"{(int)t.TotalSeconds}s";
+    }
+
+    private sealed class SystemInfo
+    {
+        public List<KeyValue> Runtime { get; set; } = new();
+        public List<KeyValue> Application { get; set; } = new();
+        public List<KeyValue> Database { get; set; } = new();
+        public List<string> Migrations { get; set; } = new();
+        public string? DbError { get; set; }
+        public List<AssemblyRow> Assemblies { get; set; } = new();
+    }
+
+    private sealed record KeyValue(string Key, string Value);
+    private sealed record AssemblyRow(string Name, string? Version, string? InformationalVersion);
+}
