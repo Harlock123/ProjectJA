@@ -22,6 +22,7 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRo
     public DbSet<Invite> Invites => Set<Invite>();
     public DbSet<TenantOidcConfig> TenantOidcConfigs => Set<TenantOidcConfig>();
     public DbSet<Project> Projects => Set<Project>();
+    public DbSet<Sprint> Sprints => Set<Sprint>();
     public DbSet<Issue> Issues => Set<Issue>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
@@ -35,6 +36,7 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRo
         modelBuilder.ApplyConfiguration(new InviteConfiguration());
         modelBuilder.ApplyConfiguration(new TenantOidcConfigConfiguration());
         modelBuilder.ApplyConfiguration(new ProjectConfiguration());
+        modelBuilder.ApplyConfiguration(new SprintConfiguration());
         modelBuilder.ApplyConfiguration(new IssueConfiguration());
         modelBuilder.ApplyConfiguration(new AttachmentConfiguration());
         modelBuilder.ApplyConfiguration(new AuditEventConfiguration());

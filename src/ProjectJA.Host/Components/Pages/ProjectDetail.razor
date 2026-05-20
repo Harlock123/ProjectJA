@@ -12,6 +12,7 @@
 @inject AuthenticationStateProvider Auth
 @inject IUserQueries Users
 @inject IProjectQueries Projects
+@inject ISprintQueries SprintsQueries
 @inject IDialogService DialogService
 
 <PageTitle>@(_project?.Name ?? "Project")</PageTitle>
@@ -29,6 +30,8 @@ else
         <MudSpacer />
         <MudButton OnClick="OpenMembersAsync" Variant="Variant.Outlined" Color="Color.Primary"
                    StartIcon="@Icons.Material.Filled.Group" Class="mr-2">Membership</MudButton>
+        <MudButton Href="@($"/projects/{ProjectId}/sprints")" Variant="Variant.Outlined" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Loop" Class="mr-2">Sprints</MudButton>
         <MudButton Href="@($"/projects/{ProjectId}/board")" Variant="Variant.Outlined" Color="Color.Primary"
                    StartIcon="@Icons.Material.Filled.ViewKanban">Board</MudButton>
     </MudStack>
@@ -68,6 +71,11 @@ else
                             <MudTd style="cursor:pointer;" title="Double-click to edit"
                                    @ondblclick="@(() => OpenEditAsync(context.Id))">
                                 @context.Title
+                                @if (context.SprintId is { } sid && _sprintNames.TryGetValue(sid, out var sname))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled" Class="ml-2"
+                                             Icon="@Icons.Material.Filled.Loop">@sname</MudChip>
+                                }
                                 @if (context.Labels.Count > 0)
                                 {
                                     <div class="mt-1">
@@ -162,6 +170,18 @@ else
                             <MudSelectItem T="Guid?" Value="@u.Id">@u.DisplayName</MudSelectItem>
                         }
                     </MudSelect>
+                    @if (_isAdmin)
+                    {
+                        var assignable = _sprints.Where(s => s.Status != SprintStatus.Completed).ToList();
+                        <MudSelect T="Guid?" Label="Sprint (optional, Admin)" @bind-Value="_draft.SprintId"
+                                   Variant="Variant.Outlined" Dense="true" Clearable="true"
+                                   HelperText="Leave empty for backlog. Only Admins can change an issue's sprint.">
+                            @foreach (var s in assignable)
+                            {
+                                <MudSelectItem T="Guid?" Value="@s.Id">@s.Name (@s.Status)</MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
                     <MudButton OnClick="CreateAsync" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
                                StartIcon="@Icons.Material.Filled.Add">Create issue</MudButton>
                     @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
@@ -178,9 +198,12 @@ else
     private Project? _project;
     private List<Issue>? _issues;
     private IReadOnlyList<UserSummary> _users = Array.Empty<UserSummary>();
+    private IReadOnlyList<SprintSummary> _sprints = Array.Empty<SprintSummary>();
+    private Dictionary<Guid, string> _sprintNames = new();
     private Guid _currentUserId;
     private ProjectRole? _role;
     private bool _canWrite;
+    private bool _isAdmin;
     private Draft _draft = new();
     private string? _error;
 
@@ -195,6 +218,7 @@ else
             return;
         }
         _canWrite = _role.Value.CanWrite();
+        _isAdmin = _role.Value == ProjectRole.Admin;
         await ReloadAsync();
     }
 
@@ -211,6 +235,8 @@ else
             .OrderBy(i => i.Number)
             .ToListAsync();
         _users = await Users.ListAllAsync(default);
+        _sprints = await SprintsQueries.ListForProjectAsync(ProjectId, default);
+        _sprintNames = _sprints.ToDictionary(s => s.Id, s => s.Name);
     }
 
     private async Task OpenMembersAsync()
@@ -252,6 +278,10 @@ else
         issue.SetLabels(SplitLabels(_draft.Labels), Clock.UtcNow);
         if (_draft.AssigneeId is not null)
             issue.Assign(_draft.AssigneeId, Clock.UtcNow);
+        // Only Admins can place a new issue directly into a sprint; the UI
+        // only shows the dropdown to them, and we re-check here.
+        if (_isAdmin && _draft.SprintId is not null)
+            issue.AssignToSprint(_draft.SprintId, Clock.UtcNow);
         Db.Issues.Add(issue);
         await Db.SaveChangesAsync();
         _draft = new();
@@ -314,5 +344,6 @@ else
         public string? Labels { get; set; }
         public int? Points { get; set; }
         public Guid? AssigneeId { get; set; }
+        public Guid? SprintId { get; set; }
     }
 }

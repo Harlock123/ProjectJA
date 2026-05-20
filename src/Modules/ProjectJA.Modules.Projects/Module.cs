@@ -13,6 +13,7 @@ public static class ProjectsModule
     public static IServiceCollection AddProjectsModule(this IServiceCollection services)
     {
         services.AddScoped<IProjectQueries, ProjectQueries>();
+        services.AddScoped<ISprintQueries, SprintQueries>();
         return services;
     }
 

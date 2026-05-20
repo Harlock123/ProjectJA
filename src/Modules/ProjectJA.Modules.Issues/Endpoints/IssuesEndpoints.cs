@@ -26,6 +26,7 @@ internal static class IssuesEndpoints
         IssueType Type, IssuePriority Priority, int? Points, string? AcceptanceCriteria,
         Guid? AssigneeId, Guid ReporterId, IReadOnlyList<string>? Labels);
     internal sealed record TransitionRequest(IssueStatus Status);
+    internal sealed record AssignSprintRequest(Guid? SprintId);
     internal sealed record AddCommentRequest(string Body, Guid AuthorId);
     internal sealed record BeginUploadEndpointRequest(string FileName, string? ContentType, long SizeBytes);
     internal sealed record IssueDto(
@@ -240,6 +241,62 @@ internal static class IssuesEndpoints
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);
+
+        // Assign/clear sprint on an issue — Admin only (matches sprint authority).
+        // Null sprintId moves the issue back to backlog. The target sprint must
+        // be in the same project as the issue and not Completed.
+        app.MapPatch("/api/issues/{id:guid}/sprint", async (
+            Guid id,
+            [FromBody] AssignSprintRequest req,
+            [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
+            [FromServices] ISprintQueries sprintQueries,
+            [FromServices] IAuditLog audit,
+            [FromServices] IClock clock,
+            HttpContext http,
+            CancellationToken ct) =>
+        {
+            var issue = await db.Set<Issue>().FirstOrDefaultAsync(i => i.Id == id, ct);
+            if (issue is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, issue.ProjectId, ProjectRole.Admin, ct);
+            if (auth.Denied) return auth.Failure!;
+
+            if (req.SprintId is { } sid)
+            {
+                var target = await sprintQueries.GetByIdAsync(sid, ct);
+                if (target is null)
+                    return Results.BadRequest(new { error = "Sprint not found." });
+                if (target.ProjectId != issue.ProjectId)
+                    return Results.BadRequest(new { error = "Sprint belongs to a different project." });
+                if (target.Status == SprintStatus.Completed)
+                    return Results.Conflict(new { error = "Can't assign an issue to a completed sprint." });
+            }
+
+            var previous = issue.SprintId;
+            issue.AssignToSprint(req.SprintId, clock.UtcNow);
+            await db.SaveChangesAsync(ct);
+
+            await audit.RecordAsync(new AuditEntry(
+                Action: "issue.sprint_changed",
+                ResourceType: "Issue",
+                ResourceId: issue.Id.ToString(),
+                Summary: req.SprintId is null
+                    ? $"Moved issue back to backlog (was sprint {previous})"
+                    : $"Moved issue to sprint {req.SprintId} (was {(previous?.ToString() ?? "backlog")})",
+                Detail: new { issueId = issue.Id, projectId = issue.ProjectId, previousSprintId = previous, newSprintId = req.SprintId }), ct);
+
+            return Results.NoContent();
+        })
+        .RequireAuthorization()
+        .WithName("AssignIssueSprint")
+        .WithSummary("Move an issue into a sprint or back to backlog (Admin only)")
+        .WithTags("Issues")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict);
 
         app.MapPost("/api/issues/{id:guid}/comments", async (
             Guid id,

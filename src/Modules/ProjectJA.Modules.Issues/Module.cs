@@ -14,9 +14,14 @@ public static class IssuesModule
     {
         services.AddScoped<IIssueSearch, IssueSearch>();
         services.AddScoped<IAttachmentService, AttachmentService>();
+        services.AddScoped<ISprintIssueOps, SprintIssueOps>();
         return services;
     }
 
     public static IEndpointRouteBuilder MapIssuesEndpoints(this IEndpointRouteBuilder app)
-        => IssuesEndpoints.Map(app);
+    {
+        IssuesEndpoints.Map(app);
+        SprintsEndpoints.Map(app);
+        return app;
+    }
 }

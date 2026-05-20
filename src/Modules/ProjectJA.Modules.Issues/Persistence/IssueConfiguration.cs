@@ -31,9 +31,11 @@ public sealed class IssueConfiguration : IEntityTypeConfiguration<Issue>
         b.Property(x => x.CreatedById).IsRequired();
         b.Property(x => x.CreatedAt).IsRequired();
         b.Property(x => x.UpdatedAt).IsRequired();
+        b.Property(x => x.SprintId);
         b.HasIndex(x => new { x.ProjectId, x.Number }).IsUnique();
         b.HasIndex(x => new { x.ProjectId, x.Status });
         b.HasIndex(x => new { x.ProjectId, x.Type });
+        b.HasIndex(x => x.SprintId);
 
         // Postgres FTS: generated tsvector column (weighted: title = A, description = B)
         // with a GIN index for fast indexed search.

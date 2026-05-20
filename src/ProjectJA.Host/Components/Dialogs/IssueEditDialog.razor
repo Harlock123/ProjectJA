@@ -9,6 +9,7 @@
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject IClock Clock
 @inject IProjectQueries Projects
+@inject ISprintQueries SprintsQueries
 @inject IUserQueries Users
 @inject IAttachmentService Attachments
 @inject AuthenticationStateProvider Auth
@@ -93,6 +94,19 @@
                                           HelperText="Free-text tags, comma-separated."
                                           Variant="Variant.Outlined" />
                         </MudStack>
+                        @{
+                            // Always include the currently-assigned sprint (even Completed) so the
+                            // dropdown displays the current value; Completed ones aren't valid moves.
+                            var sprintOptions = _sprints.Where(s => s.Status != SprintStatus.Completed || s.Id == _issue!.SprintId).ToList();
+                        }
+                        <MudSelect T="Guid?" Label="Sprint" @bind-Value="_edit.SprintId" ReadOnly="@(!_isAdmin)"
+                                   Variant="Variant.Outlined" Dense="true" Clearable="@_isAdmin"
+                                   HelperText="@( _isAdmin ? "Backlog if empty. Only Planned/Active sprints can be assigned." : "Only Admins can change an issue's sprint." )">
+                            @foreach (var s in sprintOptions)
+                            {
+                                <MudSelectItem T="Guid?" Value="@s.Id">@s.Name (@s.Status)</MudSelectItem>
+                            }
+                        </MudSelect>
                         <MudTextField Label="Description" @bind-Value="_edit.Description" ReadOnly="@(!_canWrite)"
                                       Variant="Variant.Outlined" Lines="3" />
                         <MudTextField Label="Acceptance Criteria / Definition of Done"
@@ -226,6 +240,8 @@
     private bool _jsInited;
     private bool _changed;
     private bool _canWrite;
+    private bool _isAdmin;
+    private IReadOnlyList<SprintSummary> _sprints = Array.Empty<SprintSummary>();
     private Issue? _issue;
     private string? _projectKey;
     private string? _error;
@@ -271,6 +287,8 @@
                 _projectKey = project?.Key ?? "?";
                 var role = await Projects.GetRoleAsync(_issue.ProjectId, _currentUserId, default);
                 _canWrite = role?.CanWrite() == true;
+                _isAdmin = role == ProjectRole.Admin;
+                _sprints = await SprintsQueries.ListForProjectAsync(_issue.ProjectId, default);
                 _users = await Users.ListAllAsync(default);
                 _userNames = _users.ToDictionary(u => u.Id, u => u.DisplayName);
                 _comments = _issue.Comments.OrderByDescending(c => c.CreatedAt).ToList();
@@ -286,6 +304,7 @@
                     AssigneeId = _issue.AssigneeId,
                     ReporterId = _issue.ReporterId,
                     Labels = string.Join(", ", _issue.Labels),
+                    SprintId = _issue.SprintId,
                 };
                 var attachments = await Attachments.ListAsync(IssueId, default);
                 _attachments = attachments.ToList();
@@ -375,6 +394,19 @@
                 tracked.SetReporter(_edit.ReporterId, Clock.UtcNow);
             if (tracked.Status != _edit.Status)
                 tracked.Transition(_edit.Status, Clock.UtcNow);
+            // Sprint change is Admin-only and only the changed value matters; reject
+            // moves into a Completed sprint (the dropdown already filters, but a
+            // tampered circuit could submit one).
+            if (_isAdmin && tracked.SprintId != _edit.SprintId)
+            {
+                if (_edit.SprintId is { } sid &&
+                    _sprints.FirstOrDefault(s => s.Id == sid)?.Status == SprintStatus.Completed)
+                {
+                    _error = "Can't assign an issue to a completed sprint.";
+                    return;
+                }
+                tracked.AssignToSprint(_edit.SprintId, Clock.UtcNow);
+            }
             await db.SaveChangesAsync();
         }
         catch (Exception ex)
@@ -614,6 +646,7 @@
         public Guid? AssigneeId { get; set; }
         public Guid ReporterId { get; set; }
         public string? Labels { get; set; }
+        public Guid? SprintId { get; set; }
     }
 
     private static IEnumerable<string> SplitLabels(string? csv) =>

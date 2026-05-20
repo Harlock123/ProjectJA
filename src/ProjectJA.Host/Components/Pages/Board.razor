@@ -17,6 +17,7 @@
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider Auth
 @inject IProjectQueries Projects
+@inject ISprintQueries SprintsQueries
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
@@ -59,12 +60,21 @@ else
                             {
                                 <div style="@($"font-size:0.8rem;color:{CardDescColor()};margin-top:0.15rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;")">@issue.Description</div>
                             }
-                            @if (issue.Priority != IssuePriority.None || issue.Labels.Count > 0)
+                            @{
+                                var hasSprint = issue.SprintId is { } sid && _sprintNames.TryGetValue(sid, out var sname);
+                                var anyChip = issue.Priority != IssuePriority.None || issue.Labels.Count > 0 || hasSprint;
+                            }
+                            @if (anyChip)
                             {
                                 <div style="margin-top:0.35rem;display:flex;flex-wrap:wrap;gap:0.25rem;align-items:center;">
                                     @if (issue.Priority != IssuePriority.None)
                                     {
                                         <MudChip T="string" Size="Size.Small" Color="@PriorityColor(issue.Priority)">@issue.Priority</MudChip>
+                                    }
+                                    @if (issue.SprintId is { } sid2 && _sprintNames.TryGetValue(sid2, out var sname2))
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Secondary"
+                                                 Icon="@Icons.Material.Filled.Loop">@sname2</MudChip>
                                     }
                                     @foreach (var lbl in issue.Labels)
                                     {
@@ -92,6 +102,7 @@ else
     private Project? _project;
     private bool _canWrite;
     private List<Issue> _issues = new();
+    private Dictionary<Guid, string> _sprintNames = new();
     private IDisposable? _subscription;
     private DotNetObjectReference<Board>? _selfRef;
     private string? _groupName;
@@ -137,6 +148,8 @@ else
             .Where(i => i.ProjectId == ProjectId)
             .OrderBy(i => i.Number)
             .ToListAsync();
+        _sprintNames = (await SprintsQueries.ListForProjectAsync(ProjectId, default))
+            .ToDictionary(s => s.Id, s => s.Name);
     }
 
     private IEnumerable<Issue> IssuesIn(IssueStatus column) =>

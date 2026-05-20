@@ -1,0 +1,318 @@
+@page "/projects/{projectId:guid}/sprints"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using ProjectJA.Modules.Projects.Contracts
+@using ProjectJA.Modules.Projects.Domain
+@using ProjectJA.Modules.Issues.Contracts
+@using ProjectJA.SharedKernel.Audit
+@inject AppDbContext Db
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IClock Clock
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider Auth
+@inject IProjectQueries Projects
+@inject ISprintQueries SprintQueriesSvc
+@inject ISprintIssueOps SprintIssueOpsSvc
+@inject IAuditLog Audit
+
+<PageTitle>@(_project is null ? "Sprints" : $"{_project.Key} sprints")</PageTitle>
+
+@if (_project is null)
+{
+    <MudText>Loading…</MudText>
+}
+else
+{
+    <MudButton Href="@($"/projects/{ProjectId}")" Variant="Variant.Text"
+               StartIcon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" Class="mb-2">Back to project</MudButton>
+
+    <MudText Typo="Typo.h4" GutterBottom="true">
+        <span style="font-family:monospace;">@_project.Key</span> sprints
+    </MudText>
+
+    @if (!_isAdmin)
+    {
+        <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
+            Read-only access to sprints. Only project Admins can create, start, complete, or delete sprints.
+        </MudAlert>
+    }
+
+    @if (_sprints.Count == 0)
+    {
+        <MudText Color="Color.Default" Class="mb-4">No sprints yet.</MudText>
+    }
+    else
+    {
+        <MudTable Items="_sprints" Hover="true" Dense="true" Class="mb-4">
+            <HeaderContent>
+                <MudTh>Name</MudTh>
+                <MudTh Style="width:7rem;">Status</MudTh>
+                <MudTh Style="width:5rem;">Issues</MudTh>
+                <MudTh Style="width:14rem;">Planned</MudTh>
+                <MudTh Style="width:14rem;">Started / Completed</MudTh>
+                @if (_isAdmin) { <MudTh Style="width:12rem;"></MudTh> }
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>
+                    <strong>@context.Name</strong>
+                    @if (!string.IsNullOrWhiteSpace(context.Goal))
+                    {
+                        <div style="font-size:0.85rem;color:#888;">@context.Goal</div>
+                    }
+                </MudTd>
+                <MudTd>
+                    <MudChip T="string" Size="Size.Small" Color="@StatusColor(context.Status)">@context.Status</MudChip>
+                </MudTd>
+                <MudTd>@(_issueCounts.GetValueOrDefault(context.Id, 0))</MudTd>
+                <MudTd>
+                    <MudText Typo="Typo.body2" Color="Color.Default">@FormatRange(context.PlannedStart, context.PlannedEnd)</MudText>
+                </MudTd>
+                <MudTd>
+                    @if (context.StartedAt is { } st)
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Default">Started @st.ToString("yyyy-MM-dd")</MudText>
+                    }
+                    @if (context.CompletedAt is { } co)
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Default">Completed @co.ToString("yyyy-MM-dd")</MudText>
+                    }
+                </MudTd>
+                @if (_isAdmin)
+                {
+                    <MudTd>
+                        @if (context.Status == SprintStatus.Planned)
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success"
+                                       StartIcon="@Icons.Material.Filled.PlayArrow"
+                                       OnClick="@(() => StartAsync(context))">Start</MudButton>
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           OnClick="@(() => DeleteAsync(context))" />
+                        }
+                        else if (context.Status == SprintStatus.Active)
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
+                                       StartIcon="@Icons.Material.Filled.Stop"
+                                       OnClick="@(() => CompleteAsync(context))">Complete</MudButton>
+                        }
+                    </MudTd>
+                }
+            </RowTemplate>
+        </MudTable>
+    }
+
+    @if (_isAdmin)
+    {
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudText Typo="Typo.h6" GutterBottom="true">Plan a sprint</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
+                A new sprint starts in <em>Planned</em>. Use <strong>Start</strong> on its row when you're ready
+                — only one sprint can be Active in a project at a time.
+            </MudText>
+            <MudStack Spacing="3">
+                <MudTextField Label="Name"
+                              Placeholder="e.g. Sprint 2026.05"
+                              @bind-Value="_draft.Name"
+                              Variant="Variant.Outlined" Required="true" MaxLength="200" />
+                <MudTextField Label="Goal (optional)"
+                              Placeholder="What does this sprint aim to deliver?"
+                              @bind-Value="_draft.Goal"
+                              Variant="Variant.Outlined" Lines="2" />
+                <MudStack Row="true" Spacing="2">
+                    <MudDatePicker Label="Planned start" @bind-Date="_draft.PlannedStart" />
+                    <MudDatePicker Label="Planned end" @bind-Date="_draft.PlannedEnd" />
+                </MudStack>
+                <MudButton OnClick="CreateAsync" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
+                           StartIcon="@Icons.Material.Filled.Add">Create sprint</MudButton>
+                @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
+            </MudStack>
+        </MudPaper>
+    }
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private Project? _project;
+    private Guid _currentUserId;
+    private bool _isAdmin;
+    private IReadOnlyList<SprintSummary> _sprints = Array.Empty<SprintSummary>();
+    private Dictionary<Guid, int> _issueCounts = new();
+    private Draft _draft = new();
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _currentUserId);
+        var role = await Projects.GetRoleAsync(ProjectId, _currentUserId, default);
+        if (role is null)
+        {
+            Nav.NavigateTo("/projects?denied=1");
+            return;
+        }
+        _isAdmin = role.Value == ProjectRole.Admin;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        Db.ChangeTracker.Clear();
+        _project = await Db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == ProjectId);
+        if (_project is null) return;
+        _sprints = await SprintQueriesSvc.ListForProjectAsync(ProjectId, default);
+        // Issue counts grouped per-sprint, one round trip.
+        _issueCounts = await Db.Issues.AsNoTracking()
+            .Where(i => i.ProjectId == ProjectId && i.SprintId != null)
+            .GroupBy(i => i.SprintId!.Value)
+            .Select(g => new { sid = g.Key, count = g.Count() })
+            .ToDictionaryAsync(x => x.sid, x => x.count);
+    }
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        if (!_isAdmin) { _error = "Only Admins can create sprints."; return; }
+        if (string.IsNullOrWhiteSpace(_draft.Name)) { _error = "Name is required."; return; }
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var sprint = Sprint.Create(ProjectId, _draft.Name,
+                _draft.Goal,
+                ToOffset(_draft.PlannedStart),
+                ToOffset(_draft.PlannedEnd),
+                Clock.UtcNow);
+            db.Set<Sprint>().Add(sprint);
+            await db.SaveChangesAsync();
+
+            await AuditAsync("sprint.created",
+                $"Created sprint \"{sprint.Name}\" in {_project?.Key}",
+                new { sprintId = sprint.Id, sprint.Name, sprint.Goal, sprint.PlannedStart, sprint.PlannedEnd, projectKey = _project?.Key });
+
+            _draft = new Draft();
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private async Task StartAsync(SprintSummary s)
+    {
+        _error = null;
+        if (!_isAdmin) return;
+        try
+        {
+            // One-Active-per-project invariant enforced at the application layer
+            // (the domain just gates Planned→Active).
+            if (await SprintQueriesSvc.HasActiveSprintAsync(ProjectId, default))
+            {
+                _error = "Another sprint is already Active in this project. Complete it first.";
+                return;
+            }
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Set<Sprint>().FirstAsync(x => x.Id == s.Id);
+            tracked.Start(Clock.UtcNow);
+            await db.SaveChangesAsync();
+
+            await AuditAsync("sprint.started",
+                $"Started sprint \"{tracked.Name}\" in {_project?.Key}",
+                new { sprintId = tracked.Id, tracked.Name, startedAt = tracked.StartedAt, projectKey = _project?.Key });
+
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private async Task CompleteAsync(SprintSummary s)
+    {
+        _error = null;
+        if (!_isAdmin) return;
+        try
+        {
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Set<Sprint>().FirstAsync(x => x.Id == s.Id);
+            tracked.Complete(Clock.UtcNow);
+            await db.SaveChangesAsync();
+            // Push still-open issues back to backlog. Separate operation; if it
+            // fails the sprint is still Completed and a retry is idempotent.
+            var moved = await SprintIssueOpsSvc.ClearSprintForIncompleteAsync(tracked.Id, Clock.UtcNow, default);
+
+            await AuditAsync("sprint.completed",
+                $"Completed sprint \"{tracked.Name}\" in {_project?.Key} ({moved} issue(s) returned to backlog)",
+                new { sprintId = tracked.Id, tracked.Name, completedAt = tracked.CompletedAt, issuesReturnedToBacklog = moved, projectKey = _project?.Key });
+
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private async Task DeleteAsync(SprintSummary s)
+    {
+        _error = null;
+        if (!_isAdmin) return;
+        if (s.Status != SprintStatus.Planned)
+        {
+            _error = "Only a Planned sprint can be deleted.";
+            return;
+        }
+        try
+        {
+            if (await SprintIssueOpsSvc.HasAnyIssuesInSprintAsync(s.Id, default))
+            {
+                _error = "Sprint still has assigned issues — move them to the backlog first.";
+                return;
+            }
+            await using var db = DbFactory.CreateDbContext();
+            var tracked = await db.Set<Sprint>().FirstAsync(x => x.Id == s.Id);
+            var name = tracked.Name;
+            db.Set<Sprint>().Remove(tracked);
+            await db.SaveChangesAsync();
+
+            await AuditAsync("sprint.deleted",
+                $"Deleted sprint \"{name}\" in {_project?.Key}",
+                new { sprintId = s.Id, name, projectKey = _project?.Key });
+
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    // Audit is best-effort: the membership change is already committed. Actor
+    // passed explicitly — interactive circuit, no HttpContext.
+    private async Task AuditAsync(string action, string summary, object detail)
+    {
+        try
+        {
+            await Audit.RecordAsync(
+                new AuditEntry(action, "Project", ProjectId.ToString(), summary, detail, _currentUserId),
+                default);
+        }
+        catch { /* swallowed by design */ }
+    }
+
+    private static DateTimeOffset? ToOffset(DateTime? d) =>
+        d.HasValue ? new DateTimeOffset(DateTime.SpecifyKind(d.Value, DateTimeKind.Utc)) : null;
+
+    private static string FormatRange(DateTimeOffset? a, DateTimeOffset? b)
+    {
+        if (a is null && b is null) return "—";
+        var s = a?.ToString("yyyy-MM-dd") ?? "?";
+        var e = b?.ToString("yyyy-MM-dd") ?? "?";
+        return $"{s} → {e}";
+    }
+
+    private static Color StatusColor(SprintStatus s) => s switch
+    {
+        SprintStatus.Planned => Color.Default,
+        SprintStatus.Active => Color.Success,
+        SprintStatus.Completed => Color.Info,
+        _ => Color.Default,
+    };
+
+    private sealed class Draft
+    {
+        public string Name { get; set; } = "";
+        public string? Goal { get; set; }
+        public DateTime? PlannedStart { get; set; }
+        public DateTime? PlannedEnd { get; set; }
+    }
+}

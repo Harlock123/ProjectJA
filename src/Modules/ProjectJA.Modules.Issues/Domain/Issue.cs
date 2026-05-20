@@ -14,6 +14,10 @@ public sealed class Issue
     public int? Points { get; private set; }
     public string? AcceptanceCriteria { get; private set; }
     public Guid? AssigneeId { get; private set; }
+    /// <summary>Owning sprint. Null = backlog. Set by an Admin via the sprint
+    /// dropdown / PATCH /api/issues/{id}/sprint endpoint, or cleared back to
+    /// null when the sprint is completed and the issue wasn't yet Done.</summary>
+    public Guid? SprintId { get; private set; }
     /// <summary>Who reported/recorded the issue. Defaults to the creator; editable.</summary>
     public Guid ReporterId { get; private set; }
     /// <summary>Immutable system record of who actually created the row.</summary>
@@ -73,6 +77,13 @@ public sealed class Issue
     public void Assign(Guid? assigneeId, DateTimeOffset now)
     {
         AssigneeId = assigneeId;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Move the issue into a sprint, or back to the backlog (null).</summary>
+    public void AssignToSprint(Guid? sprintId, DateTimeOffset now)
+    {
+        SprintId = sprintId;
         UpdatedAt = now;
     }
 
