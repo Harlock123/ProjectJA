@@ -6,6 +6,8 @@ using ProjectJA.Modules.Identity.Contracts;
 using ProjectJA.Modules.Issues.Contracts;
 using ProjectJA.Modules.Issues.Domain;
 using ProjectJA.Modules.Projects.Domain;
+using ProjectJA.Modules.Workflows.Contracts;
+using ProjectJA.Modules.Workflows.Domain;
 using ProjectJA.SharedKernel.Tenancy;
 using ProjectJA.SharedKernel.Time;
 
@@ -30,16 +32,24 @@ public sealed class SearchTests(AppFactory factory)
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         var key = $"SRCH{Random.Shared.Next(1000, 9999)}";
-        var project = Project.Create(org!.Id, key, "Search project", null, clock.UtcNow);
+        var project = Project.Create(org!.Id, key, "Search project", null, Guid.Empty, clock.UtcNow);
         db.Projects.Add(project);
+        await db.SaveChangesAsync();
+
+        var seeder = scope.ServiceProvider.GetRequiredService<IWorkflowSeeder>();
+        await seeder.EnsureDefaultForProjectAsync(project.Id, clock.UtcNow, default);
+        var workflows = scope.ServiceProvider.GetRequiredService<IWorkflowQueries>();
+        var wf = await workflows.GetForProjectAsync(project.Id, default);
+        var openStateId = wf!.States.OrderBy(s => s.Order)
+            .First(s => s.Category == WorkflowStateCategory.Open).Id;
 
         var marker = $"capybara{Random.Shared.Next(100000, 999999)}";
         var n1 = project.AllocateIssueNumber();
-        db.Issues.Add(Issue.Create(project.Id, n1, $"Find me {marker} in the title", null, Guid.Empty, clock.UtcNow));
+        db.Issues.Add(Issue.Create(project.Id, n1, $"Find me {marker} in the title", null, openStateId, Guid.Empty, clock.UtcNow));
         var n2 = project.AllocateIssueNumber();
-        db.Issues.Add(Issue.Create(project.Id, n2, "Unrelated", $"description mentions {marker}", Guid.Empty, clock.UtcNow));
+        db.Issues.Add(Issue.Create(project.Id, n2, "Unrelated", $"description mentions {marker}", openStateId, Guid.Empty, clock.UtcNow));
         var n3 = project.AllocateIssueNumber();
-        db.Issues.Add(Issue.Create(project.Id, n3, "Totally unrelated", "no marker here", Guid.Empty, clock.UtcNow));
+        db.Issues.Add(Issue.Create(project.Id, n3, "Totally unrelated", "no marker here", openStateId, Guid.Empty, clock.UtcNow));
         await db.SaveChangesAsync();
 
         var search = scope.ServiceProvider.GetRequiredService<IIssueSearch>();
