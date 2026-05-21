@@ -74,20 +74,6 @@ public static class StartupBootstrap
             await users.CreateAsync(admin, config["Bootstrap:AdminPassword"] ?? "ChangeMe123!");
         }
 
-        // Self-heal: if migrations ran on an empty DB the IsOrgAdmin backfill
-        // promotes nobody (no project_members yet), so the bootstrap admin can
-        // be left with IsOrgAdmin=false and lose access to /invites etc. If
-        // there's no OrgAdmin in the org, promote the bootstrap admin.
-        if (!await db.Users.AnyAsync(u => u.IsOrgAdmin))
-        {
-            var bootstrapAdmin = await db.Users.FirstOrDefaultAsync(u => u.Email == adminEmailSetting);
-            if (bootstrapAdmin is not null)
-            {
-                bootstrapAdmin.IsOrgAdmin = true;
-                await db.SaveChangesAsync();
-            }
-        }
-
         // Backfill: projects created before membership existed have no members,
         // which would lock everyone out. Give every such project all current
         // users as Member + the bootstrap admin as Admin. Idempotent (only
