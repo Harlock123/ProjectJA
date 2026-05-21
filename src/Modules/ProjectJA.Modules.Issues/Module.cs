@@ -15,6 +15,8 @@ public static class IssuesModule
         services.AddScoped<IIssueSearch, IssueSearch>();
         services.AddScoped<IAttachmentService, AttachmentService>();
         services.AddScoped<ISprintIssueOps, SprintIssueOps>();
+        services.AddScoped<IIssueLinkService, IssueLinkService>();
+        services.AddScoped<IIssueExportService, IssueExportService>();
         return services;
     }
 

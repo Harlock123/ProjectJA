@@ -26,6 +26,12 @@ public sealed class Issue
     public Guid ReporterId { get; private set; }
     /// <summary>Immutable system record of who actually created the row.</summary>
     public Guid CreatedById { get; private set; }
+    /// <summary>Planned start of work. Optional; pair with <see cref="EndDate"/>.</summary>
+    public DateTimeOffset? StartDate { get; private set; }
+    /// <summary>Planned end / due date. When both dates are set, EndDate must be >= StartDate.</summary>
+    public DateTimeOffset? EndDate { get; private set; }
+    /// <summary>0–100. Auto-bumped to 100 by the application layer on transition to a Done-category state.</summary>
+    public int PercentComplete { get; private set; }
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset UpdatedAt { get; private set; }
 
@@ -105,6 +111,35 @@ public sealed class Issue
     public void SetPriority(IssuePriority priority, DateTimeOffset now)
     {
         Priority = priority;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Set or clear the planned schedule. When both dates are supplied,
+    /// EndDate must be on or after StartDate. Either can be null independently.</summary>
+    public void SetSchedule(DateTimeOffset? startDate, DateTimeOffset? endDate, DateTimeOffset now)
+    {
+        if (startDate.HasValue && endDate.HasValue && endDate.Value < startDate.Value)
+            throw new InvalidOperationException("EndDate must be on or after StartDate.");
+        StartDate = startDate;
+        EndDate = endDate;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Set the manual progress percentage. Clamped to 0–100.</summary>
+    public void SetPercentComplete(int percent, DateTimeOffset now)
+    {
+        if (percent < 0 || percent > 100)
+            throw new InvalidOperationException("PercentComplete must be between 0 and 100.");
+        PercentComplete = percent;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Force progress to 100% — called by the application layer when
+    /// transitioning into a Done-category workflow state. Idempotent.</summary>
+    public void MarkComplete(DateTimeOffset now)
+    {
+        if (PercentComplete == 100) return;
+        PercentComplete = 100;
         UpdatedAt = now;
     }
 

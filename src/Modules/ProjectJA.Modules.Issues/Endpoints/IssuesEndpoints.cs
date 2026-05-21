@@ -31,6 +31,9 @@ internal static class IssuesEndpoints
     internal sealed record AssignSprintRequest(Guid? SprintId);
     internal sealed record AddCommentRequest(string Body, Guid AuthorId);
     internal sealed record BeginUploadEndpointRequest(string FileName, string? ContentType, long SizeBytes);
+    internal sealed record SetScheduleRequest(DateTimeOffset? StartDate, DateTimeOffset? EndDate);
+    internal sealed record SetPercentCompleteRequest(int Percent);
+    internal sealed record AddBlockerRequest(Guid BlockerIssueId);
     internal sealed record IssueDto(
         Guid Id,
         Guid ProjectId,
@@ -48,6 +51,9 @@ internal static class IssuesEndpoints
         Guid? AssigneeId,
         Guid ReporterId,
         IReadOnlyList<string> Labels,
+        DateTimeOffset? StartDate,
+        DateTimeOffset? EndDate,
+        int PercentComplete,
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt);
 
@@ -82,7 +88,7 @@ internal static class IssuesEndpoints
                     i.Id, i.ProjectId, project.Key, i.Number, i.Title, i.Description,
                     i.WorkflowStateId, s?.Name ?? "?", s?.Category ?? WorkflowStateCategory.Open,
                     i.Type, i.Priority, i.Points, i.AcceptanceCriteria, i.AssigneeId, i.ReporterId,
-                    i.Labels, i.CreatedAt, i.UpdatedAt);
+                    i.Labels, i.StartDate, i.EndDate, i.PercentComplete, i.CreatedAt, i.UpdatedAt);
             }).ToList();
             return Results.Ok(items);
         })
@@ -151,7 +157,9 @@ internal static class IssuesEndpoints
                 issue.Id, issue.ProjectId, project.Key, issue.Number, issue.Title, issue.Description,
                 issue.WorkflowStateId, initialState.Name, initialState.Category,
                 issue.Type, issue.Priority, issue.Points, issue.AcceptanceCriteria,
-                issue.AssigneeId, issue.ReporterId, issue.Labels, issue.CreatedAt, issue.UpdatedAt));
+                issue.AssigneeId, issue.ReporterId, issue.Labels,
+                issue.StartDate, issue.EndDate, issue.PercentComplete,
+                issue.CreatedAt, issue.UpdatedAt));
         })
         .RequireAuthorization()
         .WithName("CreateIssue")
@@ -183,7 +191,9 @@ internal static class IssuesEndpoints
                 issue.Id, issue.ProjectId, project.Key, issue.Number, issue.Title, issue.Description,
                 issue.WorkflowStateId, state?.Name ?? "?", state?.Category ?? WorkflowStateCategory.Open,
                 issue.Type, issue.Priority, issue.Points, issue.AcceptanceCriteria,
-                issue.AssigneeId, issue.ReporterId, issue.Labels, issue.CreatedAt, issue.UpdatedAt));
+                issue.AssigneeId, issue.ReporterId, issue.Labels,
+                issue.StartDate, issue.EndDate, issue.PercentComplete,
+                issue.CreatedAt, issue.UpdatedAt));
         })
         .RequireAuthorization()
         .WithName("GetIssue")
@@ -259,6 +269,12 @@ internal static class IssuesEndpoints
                 return Results.Conflict(new { error = $"Workflow doesn't allow moving from \"{oldState?.Name ?? "?"}\" to \"{target.Name}\"." });
 
             issue.Transition(req.WorkflowStateId, clock.UtcNow);
+            // Moving into any Done-category state implies the work is finished.
+            // Bump to 100% so the report / Excel export stays consistent. We
+            // never reset progress on reverse transitions (would silently drop
+            // user-entered data).
+            if (target.Category == WorkflowStateCategory.Done)
+                issue.MarkComplete(clock.UtcNow);
             await db.SaveChangesAsync(ct);
 
             await audit.RecordAsync(new AuditEntry(
@@ -344,6 +360,151 @@ internal static class IssuesEndpoints
         .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status409Conflict);
 
+        app.MapPatch("/api/issues/{id:guid}/schedule", async (
+            Guid id,
+            [FromBody] SetScheduleRequest req,
+            [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
+            [FromServices] IClock clock,
+            HttpContext http,
+            CancellationToken ct) =>
+        {
+            var issue = await db.Set<Issue>().FirstOrDefaultAsync(i => i.Id == id, ct);
+            if (issue is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, issue.ProjectId, ProjectRole.Member, ct);
+            if (auth.Denied) return auth.Failure!;
+            try { issue.SetSchedule(req.StartDate, req.EndDate, clock.UtcNow); }
+            catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            await db.SaveChangesAsync(ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization()
+        .WithName("SetIssueSchedule")
+        .WithSummary("Set planned start/end dates on an issue (requires Member role)")
+        .WithTags("Issues")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound);
+
+        app.MapPatch("/api/issues/{id:guid}/percent-complete", async (
+            Guid id,
+            [FromBody] SetPercentCompleteRequest req,
+            [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
+            [FromServices] IClock clock,
+            HttpContext http,
+            CancellationToken ct) =>
+        {
+            var issue = await db.Set<Issue>().FirstOrDefaultAsync(i => i.Id == id, ct);
+            if (issue is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, issue.ProjectId, ProjectRole.Member, ct);
+            if (auth.Denied) return auth.Failure!;
+            try { issue.SetPercentComplete(req.Percent, clock.UtcNow); }
+            catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            await db.SaveChangesAsync(ct);
+            return Results.NoContent();
+        })
+        .RequireAuthorization()
+        .WithName("SetIssuePercentComplete")
+        .WithSummary("Set manual % complete (0–100) on an issue (requires Member role)")
+        .WithTags("Issues")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound);
+
+        app.MapGet("/api/issues/{id:guid}/links", async (
+            Guid id,
+            [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
+            [FromServices] IIssueLinkService links,
+            HttpContext http,
+            CancellationToken ct) =>
+        {
+            var issue = await db.Set<Issue>().AsNoTracking().FirstOrDefaultAsync(i => i.Id == id, ct);
+            if (issue is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, issue.ProjectId, ProjectRole.Viewer, ct);
+            if (auth.Denied) return auth.Failure!;
+            return Results.Ok(await links.GetLinksAsync(id, ct));
+        })
+        .RequireAuthorization()
+        .WithName("GetIssueLinks")
+        .WithSummary("List the issues blocking this one and the issues it blocks (requires membership)")
+        .WithTags("Issues")
+        .Produces<IssueLinksView>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound);
+
+        // POST adds "blockerIssue blocks {id}" — i.e. registers a new entry in
+        // this issue's BlockedBy list. Validation lives in IIssueLinkService;
+        // we map its discriminated outcome to HTTP semantics here.
+        app.MapPost("/api/issues/{id:guid}/blockers", async (
+            Guid id,
+            [FromBody] AddBlockerRequest req,
+            [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
+            [FromServices] IIssueLinkService links,
+            HttpContext http,
+            CancellationToken ct) =>
+        {
+            var blocked = await db.Set<Issue>().AsNoTracking().FirstOrDefaultAsync(i => i.Id == id, ct);
+            if (blocked is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, blocked.ProjectId, ProjectRole.Member, ct);
+            if (auth.Denied) return auth.Failure!;
+
+            var outcome = await links.AddBlockerAsync(id, req.BlockerIssueId, auth.UserId, ct);
+            return outcome switch
+            {
+                AddBlockerOutcome.Added => Results.Created($"/api/issues/{id}/links", new { }),
+                AddBlockerOutcome.SelfLink => Results.BadRequest(new { error = "An issue cannot block itself." }),
+                AddBlockerOutcome.NotFound => Results.BadRequest(new { error = "Blocker issue not found." }),
+                AddBlockerOutcome.CrossProject => Results.BadRequest(new { error = "Blocker must belong to the same project." }),
+                AddBlockerOutcome.Duplicate => Results.Conflict(new { error = "Link already exists." }),
+                AddBlockerOutcome.Cycle => Results.Conflict(new { error = "Adding this blocker would create a cycle." }),
+                _ => Results.Problem("Unknown outcome."),
+            };
+        })
+        .RequireAuthorization()
+        .WithName("AddIssueBlocker")
+        .WithSummary("Register that another issue blocks this one (requires Member role)")
+        .WithTags("Issues")
+        .Produces(StatusCodes.Status201Created)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict);
+
+        app.MapDelete("/api/issues/{id:guid}/blockers/{blockerIssueId:guid}", async (
+            Guid id,
+            Guid blockerIssueId,
+            [FromServices] DbContext db,
+            [FromServices] IProjectQueries projects,
+            [FromServices] IIssueLinkService links,
+            HttpContext http,
+            CancellationToken ct) =>
+        {
+            var blocked = await db.Set<Issue>().AsNoTracking().FirstOrDefaultAsync(i => i.Id == id, ct);
+            if (blocked is null) return Results.NotFound();
+            var auth = await ProjectAccess.RequireAsync(http, projects, blocked.ProjectId, ProjectRole.Member, ct);
+            if (auth.Denied) return auth.Failure!;
+            return await links.RemoveBlockerAsync(id, blockerIssueId, ct)
+                ? Results.NoContent()
+                : Results.NotFound();
+        })
+        .RequireAuthorization()
+        .WithName("RemoveIssueBlocker")
+        .WithSummary("Remove a blocker relationship (requires Member role)")
+        .WithTags("Issues")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound);
+
         app.MapPost("/api/issues/{id:guid}/comments", async (
             Guid id,
             [FromBody] AddCommentRequest req,
@@ -407,6 +568,32 @@ internal static class IssuesEndpoints
         .WithSummary("Delete an issue (requires Member role)")
         .WithTags("Issues")
         .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound);
+
+        app.MapGet("/api/projects/{projectId:guid}/export.xlsx", async (
+            Guid projectId,
+            [FromServices] IIssueExportService export,
+            [FromServices] IProjectQueries projects,
+            HttpContext http,
+            CancellationToken ct) =>
+        {
+            var auth = await ProjectAccess.RequireAsync(http, projects, projectId, ProjectRole.Viewer, ct);
+            if (auth.Denied) return auth.Failure!;
+            var bytes = await export.ExportProjectAsync(projectId, ct);
+            if (bytes is null) return Results.NotFound();
+            var summary = await projects.GetSummaryAsync(projectId, ct);
+            var fileName = $"{summary?.Key ?? "project"}-issues.xlsx";
+            return Results.File(bytes,
+                contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                fileDownloadName: fileName);
+        })
+        .RequireAuthorization()
+        .WithName("ExportProjectIssues")
+        .WithSummary("Download an MS-Project-style xlsx of every issue in a project (requires membership)")
+        .WithTags("Issues")
+        .Produces(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden)
         .Produces(StatusCodes.Status404NotFound);

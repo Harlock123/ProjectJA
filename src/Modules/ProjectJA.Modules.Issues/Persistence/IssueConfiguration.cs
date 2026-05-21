@@ -32,6 +32,9 @@ public sealed class IssueConfiguration : IEntityTypeConfiguration<Issue>
         b.Property(x => x.CreatedAt).IsRequired();
         b.Property(x => x.UpdatedAt).IsRequired();
         b.Property(x => x.SprintId);
+        b.Property(x => x.StartDate);
+        b.Property(x => x.EndDate);
+        b.Property(x => x.PercentComplete).IsRequired().HasDefaultValue(0);
         b.HasIndex(x => new { x.ProjectId, x.Number }).IsUnique();
         b.HasIndex(x => new { x.ProjectId, x.WorkflowStateId });
         b.HasIndex(x => new { x.ProjectId, x.Type });

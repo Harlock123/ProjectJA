@@ -11,6 +11,7 @@
 @inject AppDbContext Db
 @inject IClock Clock
 @inject IAttachmentService Attachments
+@inject IIssueLinkService IssueLinks
 @inject IUserQueries Users
 @inject IProjectQueries Projects
 @inject IWorkflowQueries WorkflowsQueries
@@ -84,6 +85,21 @@ else
                     }
                 </MudSelect>
             </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudDatePicker Label="Start date" @bind-Date="_edit.StartDate" ReadOnly="@(!_canWrite)"
+                               Variant="Variant.Outlined" Editable="true" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudDatePicker Label="End date" @bind-Date="_edit.EndDate" ReadOnly="@(!_canWrite)"
+                               Variant="Variant.Outlined" Editable="true" Clearable="true"
+                               HelperText="Must be on or after the start date." />
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudNumericField T="int" Label="% Complete" @bind-Value="_edit.PercentComplete"
+                                 ReadOnly="@(!_canWrite)" Variant="Variant.Outlined"
+                                 Min="0" Max="100" Step="5"
+                                 HelperText="Auto-set to 100 when transitioned to Done." />
+            </MudItem>
             <MudItem xs="12">
                 <MudTextField Label="Description" @bind-Value="_edit.Description" ReadOnly="@(!_canWrite)"
                               Variant="Variant.Outlined" Lines="4" />
@@ -106,6 +122,102 @@ else
             </MudText>
         </MudStack>
         @if (_saveError is not null) { <MudAlert Severity="Severity.Error" Class="mt-2">@_saveError</MudAlert> }
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudText Typo="Typo.h6" GutterBottom="true">Blockers</MudText>
+        <MudGrid Spacing="3">
+            <MudItem xs="12" md="6">
+                <MudText Typo="Typo.subtitle2">Blocked by</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Default">
+                    Issues that must finish before this one can complete.
+                </MudText>
+                @if (_links is null)
+                {
+                    <MudText Class="mt-2">Loading…</MudText>
+                }
+                else if (_links.BlockedBy.Count == 0)
+                {
+                    <MudText Class="mt-2" Color="Color.Default">Not blocked.</MudText>
+                }
+                else
+                {
+                    <MudList T="IssueLinkSummary" Dense="true" Class="mt-2">
+                        @foreach (var b in _links.BlockedBy)
+                        {
+                            <MudListItem T="IssueLinkSummary" Value="b">
+                                <div style="display:flex;align-items:center;gap:0.5rem;">
+                                    <MudLink Href="@($"/issues/{b.IssueId}")"
+                                             Style="font-family:monospace;flex:0 0 auto;">@_projectKey-@b.Number</MudLink>
+                                    <span style="flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;">@b.Title</span>
+                                    @if (_canWrite)
+                                    {
+                                        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                                                       Color="Color.Error"
+                                                       OnClick="@(() => RemoveBlockerAsync(b.IssueId))" />
+                                    }
+                                </div>
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+
+                @if (_canWrite)
+                {
+                    @if (_blockerCandidates.Count == 0)
+                    {
+                        <MudText Class="mt-3" Color="Color.Default" Typo="Typo.body2">
+                            No other issues in this project are available to add as blockers.
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.End" Spacing="2" Class="mt-3">
+                            <MudSelect T="Guid?" Label="Add blocker" @bind-Value="_addBlockerSelection"
+                                       Variant="Variant.Outlined" Dense="true" Clearable="true">
+                                @foreach (var candidate in _blockerCandidates)
+                                {
+                                    <MudSelectItem T="Guid?" Value="@((Guid?)candidate.IssueId)">
+                                        @($"{_projectKey}-{candidate.Number}")  @candidate.Title
+                                    </MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudButton OnClick="AddBlockerAsync" Variant="Variant.Filled" Color="Color.Primary"
+                                       Disabled="@(_addBlockerSelection is null)"
+                                       StartIcon="@Icons.Material.Filled.Add">Add</MudButton>
+                        </MudStack>
+                    }
+                    @if (_linkError is not null) { <MudAlert Severity="Severity.Error" Class="mt-2">@_linkError</MudAlert> }
+                }
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudText Typo="Typo.subtitle2">Blocks</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Default">
+                    Issues that wait on this one (managed from the other issue's page).
+                </MudText>
+                @if (_links is null)
+                {
+                    <MudText Class="mt-2">Loading…</MudText>
+                }
+                else if (_links.Blocks.Count == 0)
+                {
+                    <MudText Class="mt-2" Color="Color.Default">Doesn't block anything.</MudText>
+                }
+                else
+                {
+                    <MudList T="IssueLinkSummary" Dense="true" Class="mt-2">
+                        @foreach (var b in _links.Blocks)
+                        {
+                            <MudListItem T="IssueLinkSummary" Value="b">
+                                <MudLink Href="@($"/issues/{b.IssueId}")"
+                                         Style="font-family:monospace;">@_projectKey-@b.Number</MudLink>
+                                &nbsp;@b.Title
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+            </MudItem>
+        </MudGrid>
     </MudPaper>
 
     <MudPaper Class="pa-4" Elevation="1">
@@ -172,6 +284,10 @@ else
     private IReadOnlyList<UserSummary> _users = Array.Empty<UserSummary>();
     private Dictionary<Guid, string> _userNames = new();
     private EditModel _edit = new();
+    private IssueLinksView? _links;
+    private List<IssueLinkSummary> _blockerCandidates = new();
+    private Guid? _addBlockerSelection;
+    private string? _linkError;
 
     private string CreatorName =>
         _issue is not null && _userNames.TryGetValue(_issue.CreatedById, out var n) ? n : "—";
@@ -226,9 +342,27 @@ else
             AcceptanceCriteria = _issue.AcceptanceCriteria,
             AssigneeId = _issue.AssigneeId,
             ReporterId = _issue.ReporterId,
+            StartDate = _issue.StartDate?.LocalDateTime.Date,
+            EndDate = _issue.EndDate?.LocalDateTime.Date,
+            PercentComplete = _issue.PercentComplete,
         };
         var list = await Attachments.ListAsync(IssueId, default);
         _attachments = list.ToList();
+
+        _links = await IssueLinks.GetLinksAsync(IssueId, default);
+        // Pickable blocker candidates: every other issue in this project that
+        // isn't already in our BlockedBy list. (The service also rejects
+        // self-links and cycles at submit time, so this is just to keep the
+        // dropdown small.)
+        var blockedByIds = _links.BlockedBy.Select(b => b.IssueId).ToList();
+        _blockerCandidates = await Db.Issues.AsNoTracking()
+            .Where(i => i.ProjectId == _issue.ProjectId
+                        && i.Id != IssueId
+                        && !blockedByIds.Contains(i.Id))
+            .OrderBy(i => i.Number)
+            .Select(i => new IssueLinkSummary(i.Id, i.Number, i.Title))
+            .ToListAsync();
+        _addBlockerSelection = null;
     }
 
     private async Task SaveAsync()
@@ -257,10 +391,58 @@ else
         tracked.Assign(_edit.AssigneeId, Clock.UtcNow);
         if (_edit.ReporterId != Guid.Empty)
             tracked.SetReporter(_edit.ReporterId, Clock.UtcNow);
+        try
+        {
+            tracked.SetSchedule(
+                _edit.StartDate is { } sd ? new DateTimeOffset(sd, TimeSpan.Zero) : null,
+                _edit.EndDate is { } ed ? new DateTimeOffset(ed, TimeSpan.Zero) : null,
+                Clock.UtcNow);
+            tracked.SetPercentComplete(Math.Clamp(_edit.PercentComplete, 0, 100), Clock.UtcNow);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _saveError = ex.Message;
+            return;
+        }
         await Db.SaveChangesAsync();
 
         await ReloadAsync();
         Snackbar.Add("Issue details saved.", Severity.Success);
+    }
+
+    private async Task AddBlockerAsync()
+    {
+        _linkError = null;
+        if (!_canWrite || _addBlockerSelection is not { } blockerId) return;
+        var outcome = await IssueLinks.AddBlockerAsync(IssueId, blockerId, Guid.Empty, default);
+        // Guid.Empty is fine here for actingUserId — the service only stores
+        // it for audit, and we currently don't expose user identity to the
+        // page-level link service caller. (Refactor if/when audit needs it.)
+        _linkError = outcome switch
+        {
+            AddBlockerOutcome.Added => null,
+            AddBlockerOutcome.SelfLink => "An issue cannot block itself.",
+            AddBlockerOutcome.NotFound => "Selected issue no longer exists.",
+            AddBlockerOutcome.CrossProject => "Blocker must belong to the same project.",
+            AddBlockerOutcome.Duplicate => "That issue is already a blocker.",
+            AddBlockerOutcome.Cycle => "Adding this blocker would create a cycle.",
+            _ => "Unable to add blocker.",
+        };
+        if (_linkError is null)
+        {
+            await ReloadAsync();
+            Snackbar.Add("Blocker added.", Severity.Success);
+        }
+    }
+
+    private async Task RemoveBlockerAsync(Guid blockerId)
+    {
+        if (!_canWrite) return;
+        if (await IssueLinks.RemoveBlockerAsync(IssueId, blockerId, default))
+        {
+            await ReloadAsync();
+            Snackbar.Add("Blocker removed.", Severity.Success);
+        }
     }
 
     private sealed class EditModel
@@ -272,6 +454,9 @@ else
         public string? AcceptanceCriteria { get; set; }
         public Guid? AssigneeId { get; set; }
         public Guid ReporterId { get; set; }
+        public DateTime? StartDate { get; set; }
+        public DateTime? EndDate { get; set; }
+        public int PercentComplete { get; set; }
     }
 
     [JSInvokable]

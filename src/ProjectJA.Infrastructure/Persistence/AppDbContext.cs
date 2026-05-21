@@ -27,6 +27,7 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRo
     public DbSet<Sprint> Sprints => Set<Sprint>();
     public DbSet<Workflow> Workflows => Set<Workflow>();
     public DbSet<Issue> Issues => Set<Issue>();
+    public DbSet<IssueLink> IssueLinks => Set<IssueLink>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<EmailOutboxEntry> EmailOutbox => Set<EmailOutboxEntry>();
@@ -42,6 +43,7 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRo
         modelBuilder.ApplyConfiguration(new SprintConfiguration());
         modelBuilder.ApplyConfiguration(new WorkflowConfiguration());
         modelBuilder.ApplyConfiguration(new IssueConfiguration());
+        modelBuilder.ApplyConfiguration(new IssueLinkConfiguration());
         modelBuilder.ApplyConfiguration(new AttachmentConfiguration());
         modelBuilder.ApplyConfiguration(new AuditEventConfiguration());
         modelBuilder.ApplyConfiguration(new EmailOutboxEntryConfiguration());
