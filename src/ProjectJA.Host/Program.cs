@@ -198,6 +198,11 @@ builder.Services.AddScheduler();
 
 var app = builder.Build();
 
+// Force-load ClosedXML at startup so /system/versioning lists it. The Excel
+// export only touches the type lazily on first request, which means the
+// diagnostic page hides the dependency until someone actually exports.
+_ = typeof(ClosedXML.Excel.XLWorkbook);
+
 app.UseSerilogRequestLogging(opts =>
 {
     opts.MessageTemplate = "HTTP {RequestMethod} {RequestPath} → {StatusCode} in {Elapsed:0.0}ms";
