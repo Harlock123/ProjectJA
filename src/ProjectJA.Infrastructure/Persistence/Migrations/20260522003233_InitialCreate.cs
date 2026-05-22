@@ -36,8 +36,10 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                     LastName = table.Column<string>(type: "text", nullable: false),
                     OrganizationId = table.Column<Guid>(type: "uuid", nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    IsOrgAdmin = table.Column<bool>(type: "boolean", nullable: false),
                     ThemeKey = table.Column<string>(type: "text", nullable: true),
                     ThemeDark = table.Column<bool>(type: "boolean", nullable: false),
+                    AvatarKey = table.Column<string>(type: "text", nullable: true),
                     UserName = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: true),
                     NormalizedUserName = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: true),
                     Email = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: true),
@@ -135,6 +137,21 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "issue_links",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    BlockerIssueId = table.Column<Guid>(type: "uuid", nullable: false),
+                    BlockedIssueId = table.Column<Guid>(type: "uuid", nullable: false),
+                    CreatedById = table.Column<Guid>(type: "uuid", nullable: false),
+                    CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_issue_links", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "issues",
                 columns: table => new
                 {
@@ -143,15 +160,21 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                     Number = table.Column<int>(type: "integer", nullable: false),
                     Title = table.Column<string>(type: "character varying(300)", maxLength: 300, nullable: false),
                     Description = table.Column<string>(type: "character varying(8000)", maxLength: 8000, nullable: true),
-                    Status = table.Column<int>(type: "integer", nullable: false),
+                    WorkflowStateId = table.Column<Guid>(type: "uuid", nullable: false),
                     Type = table.Column<int>(type: "integer", nullable: false),
+                    Priority = table.Column<int>(type: "integer", nullable: false),
                     Points = table.Column<int>(type: "integer", nullable: true),
                     AcceptanceCriteria = table.Column<string>(type: "character varying(8000)", maxLength: 8000, nullable: true),
                     AssigneeId = table.Column<Guid>(type: "uuid", nullable: true),
+                    SprintId = table.Column<Guid>(type: "uuid", nullable: true),
                     ReporterId = table.Column<Guid>(type: "uuid", nullable: false),
                     CreatedById = table.Column<Guid>(type: "uuid", nullable: false),
+                    StartDate = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    EndDate = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    PercentComplete = table.Column<int>(type: "integer", nullable: false, defaultValue: 0),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    Labels = table.Column<string[]>(type: "text[]", nullable: false),
                     SearchVector = table.Column<NpgsqlTsVector>(type: "tsvector", nullable: true, computedColumnSql: "setweight(to_tsvector('english', coalesce(\"Title\", '')), 'A') || setweight(to_tsvector('english', coalesce(\"Description\", '')), 'B')", stored: true)
                 },
                 constraints: table =>
@@ -191,6 +214,26 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "sprints",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    ProjectId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Name = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
+                    Goal = table.Column<string>(type: "character varying(2000)", maxLength: 2000, nullable: true),
+                    Status = table.Column<int>(type: "integer", nullable: false),
+                    PlannedStart = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    PlannedEnd = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    StartedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    CompletedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_sprints", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "tenant_oidc_config",
                 columns: table => new
                 {
@@ -207,6 +250,21 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_tenant_oidc_config", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "workflows",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    ProjectId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Name = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
+                    IsDefault = table.Column<bool>(type: "boolean", nullable: false),
+                    CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_workflows", x => x.Id);
                 });
 
             migrationBuilder.CreateTable(
@@ -336,6 +394,67 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
+            migrationBuilder.CreateTable(
+                name: "project_members",
+                columns: table => new
+                {
+                    ProjectId = table.Column<Guid>(type: "uuid", nullable: false),
+                    UserId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Role = table.Column<int>(type: "integer", nullable: false),
+                    AddedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_project_members", x => new { x.ProjectId, x.UserId });
+                    table.ForeignKey(
+                        name: "FK_project_members_projects_ProjectId",
+                        column: x => x.ProjectId,
+                        principalTable: "projects",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "workflow_states",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    WorkflowId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Name = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
+                    Order = table.Column<int>(type: "integer", nullable: false),
+                    Category = table.Column<int>(type: "integer", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_workflow_states", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_workflow_states_workflows_WorkflowId",
+                        column: x => x.WorkflowId,
+                        principalTable: "workflows",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "workflow_transitions",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    WorkflowId = table.Column<Guid>(type: "uuid", nullable: false),
+                    FromStateId = table.Column<Guid>(type: "uuid", nullable: false),
+                    ToStateId = table.Column<Guid>(type: "uuid", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_workflow_transitions", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_workflow_transitions_workflows_WorkflowId",
+                        column: x => x.WorkflowId,
+                        principalTable: "workflows",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
             migrationBuilder.CreateIndex(
                 name: "IX_aspnetroleclaims_RoleId",
                 table: "aspnetroleclaims",
@@ -415,20 +534,31 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                 column: "IssueId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_issue_links_BlockedIssueId",
+                table: "issue_links",
+                column: "BlockedIssueId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_issue_links_BlockerIssueId_BlockedIssueId",
+                table: "issue_links",
+                columns: new[] { "BlockerIssueId", "BlockedIssueId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_issues_ProjectId_Number",
                 table: "issues",
                 columns: new[] { "ProjectId", "Number" },
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_issues_ProjectId_Status",
-                table: "issues",
-                columns: new[] { "ProjectId", "Status" });
-
-            migrationBuilder.CreateIndex(
                 name: "IX_issues_ProjectId_Type",
                 table: "issues",
                 columns: new[] { "ProjectId", "Type" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_issues_ProjectId_WorkflowStateId",
+                table: "issues",
+                columns: new[] { "ProjectId", "WorkflowStateId" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_issues_SearchVector",
@@ -437,16 +567,62 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                 .Annotation("Npgsql:IndexMethod", "gin");
 
             migrationBuilder.CreateIndex(
+                name: "IX_issues_SprintId",
+                table: "issues",
+                column: "SprintId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_issues_WorkflowStateId",
+                table: "issues",
+                column: "WorkflowStateId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_organizations_Slug",
                 table: "organizations",
                 column: "Slug",
                 unique: true);
 
             migrationBuilder.CreateIndex(
+                name: "IX_project_members_UserId",
+                table: "project_members",
+                column: "UserId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_projects_OrganizationId_Key",
                 table: "projects",
                 columns: new[] { "OrganizationId", "Key" },
                 unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_sprints_ProjectId",
+                table: "sprints",
+                column: "ProjectId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_sprints_ProjectId_Status",
+                table: "sprints",
+                columns: new[] { "ProjectId", "Status" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_workflow_states_WorkflowId",
+                table: "workflow_states",
+                column: "WorkflowId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_workflow_states_WorkflowId_Order",
+                table: "workflow_states",
+                columns: new[] { "WorkflowId", "Order" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_workflow_transitions_WorkflowId_FromStateId_ToStateId",
+                table: "workflow_transitions",
+                columns: new[] { "WorkflowId", "FromStateId", "ToStateId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_workflows_ProjectId",
+                table: "workflows",
+                column: "ProjectId");
         }
 
         /// <inheritdoc />
@@ -483,13 +659,25 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                 name: "issue_comments");
 
             migrationBuilder.DropTable(
+                name: "issue_links");
+
+            migrationBuilder.DropTable(
                 name: "organizations");
 
             migrationBuilder.DropTable(
-                name: "projects");
+                name: "project_members");
+
+            migrationBuilder.DropTable(
+                name: "sprints");
 
             migrationBuilder.DropTable(
                 name: "tenant_oidc_config");
+
+            migrationBuilder.DropTable(
+                name: "workflow_states");
+
+            migrationBuilder.DropTable(
+                name: "workflow_transitions");
 
             migrationBuilder.DropTable(
                 name: "aspnetroles");
@@ -499,6 +687,12 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
 
             migrationBuilder.DropTable(
                 name: "issues");
+
+            migrationBuilder.DropTable(
+                name: "projects");
+
+            migrationBuilder.DropTable(
+                name: "workflows");
         }
     }
 }

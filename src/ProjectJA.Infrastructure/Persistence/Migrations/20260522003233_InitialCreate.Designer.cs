@@ -13,8 +13,8 @@ using ProjectJA.Infrastructure.Persistence;
 namespace ProjectJA.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260520022637_AddSprintsAndIssueSprint")]
-    partial class AddSprintsAndIssueSprint
+    [Migration("20260522003233_InitialCreate")]
+    partial class InitialCreate
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -261,6 +261,9 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                     b.Property<int>("AccessFailedCount")
                         .HasColumnType("integer");
 
+                    b.Property<string>("AvatarKey")
+                        .HasColumnType("text");
+
                     b.Property<string>("ConcurrencyStamp")
                         .IsConcurrencyToken()
                         .HasColumnType("text");
@@ -278,6 +281,9 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                     b.Property<string>("FirstName")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<bool>("IsOrgAdmin")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("LastName")
                         .IsRequired()
@@ -508,12 +514,20 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                         .HasMaxLength(8000)
                         .HasColumnType("character varying(8000)");
 
+                    b.Property<DateTimeOffset?>("EndDate")
+                        .HasColumnType("timestamp with time zone");
+
                     b.PrimitiveCollection<string[]>("Labels")
                         .IsRequired()
                         .HasColumnType("text[]");
 
                     b.Property<int>("Number")
                         .HasColumnType("integer");
+
+                    b.Property<int>("PercentComplete")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
 
                     b.Property<int?>("Points")
                         .HasColumnType("integer");
@@ -535,8 +549,8 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("SprintId")
                         .HasColumnType("uuid");
 
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
+                    b.Property<DateTimeOffset?>("StartDate")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -549,6 +563,9 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid>("WorkflowStateId")
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
 
                     b.HasIndex("SearchVector");
@@ -557,14 +574,44 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SprintId");
 
+                    b.HasIndex("WorkflowStateId");
+
                     b.HasIndex("ProjectId", "Number")
                         .IsUnique();
 
-                    b.HasIndex("ProjectId", "Status");
-
                     b.HasIndex("ProjectId", "Type");
 
+                    b.HasIndex("ProjectId", "WorkflowStateId");
+
                     b.ToTable("issues", (string)null);
+                });
+
+            modelBuilder.Entity("ProjectJA.Modules.Issues.Domain.IssueLink", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BlockedIssueId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BlockerIssueId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedById")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BlockedIssueId");
+
+                    b.HasIndex("BlockerIssueId", "BlockedIssueId")
+                        .IsUnique();
+
+                    b.ToTable("issue_links", (string)null);
                 });
 
             modelBuilder.Entity("ProjectJA.Modules.Projects.Domain.Project", b =>
@@ -647,6 +694,33 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                     b.HasIndex("ProjectId", "Status");
 
                     b.ToTable("sprints", (string)null);
+                });
+
+            modelBuilder.Entity("ProjectJA.Modules.Workflows.Domain.Workflow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId");
+
+                    b.ToTable("workflows", (string)null);
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
@@ -763,6 +837,71 @@ namespace ProjectJA.Infrastructure.Persistence.Migrations
                         });
 
                     b.Navigation("Members");
+                });
+
+            modelBuilder.Entity("ProjectJA.Modules.Workflows.Domain.Workflow", b =>
+                {
+                    b.OwnsMany("ProjectJA.Modules.Workflows.Domain.WorkflowState", "States", b1 =>
+                        {
+                            b1.Property<Guid>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("uuid");
+
+                            b1.Property<int>("Category")
+                                .HasColumnType("integer");
+
+                            b1.Property<string>("Name")
+                                .IsRequired()
+                                .HasMaxLength(200)
+                                .HasColumnType("character varying(200)");
+
+                            b1.Property<int>("Order")
+                                .HasColumnType("integer");
+
+                            b1.Property<Guid>("WorkflowId")
+                                .HasColumnType("uuid");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("WorkflowId");
+
+                            b1.HasIndex("WorkflowId", "Order");
+
+                            b1.ToTable("workflow_states", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("WorkflowId");
+                        });
+
+                    b.OwnsMany("ProjectJA.Modules.Workflows.Domain.WorkflowTransition", "Transitions", b1 =>
+                        {
+                            b1.Property<Guid>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("uuid");
+
+                            b1.Property<Guid>("FromStateId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<Guid>("ToStateId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<Guid>("WorkflowId")
+                                .HasColumnType("uuid");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("WorkflowId", "FromStateId", "ToStateId")
+                                .IsUnique();
+
+                            b1.ToTable("workflow_transitions", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("WorkflowId");
+                        });
+
+                    b.Navigation("States");
+
+                    b.Navigation("Transitions");
                 });
 #pragma warning restore 612, 618
         }
