@@ -11,6 +11,7 @@
 @inject ThemeCatalog Catalog
 @inject AvatarCatalog Avatars
 @inject ThemeState ThemeState
+@inject AvatarState AvatarState
 @inject IUserPreferences Preferences
 @inject UserManager<ApplicationUser> Users
 @inject AuthenticationStateProvider Auth
@@ -193,6 +194,9 @@
         var newKey = _selectedAvatarKey == key ? null : key;
         _selectedAvatarKey = newKey;
         await Preferences.SetAvatarKeyAsync(_userId, newKey, default);
+        // Publish to circuit-scoped AvatarState so MainLayout's top-right avatar
+        // re-renders without a page reload.
+        AvatarState.Set(newKey);
         Snackbar.Add(newKey is null ? "Avatar cleared." : "Avatar saved.", Severity.Success);
     }
 

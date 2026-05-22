@@ -194,6 +194,7 @@ builder.Services.AddMudServices();
 builder.Services.AddSingleton<ProjectJA.Host.Theming.ThemeCatalog>();
 builder.Services.AddSingleton<ProjectJA.Host.Theming.AvatarCatalog>();
 builder.Services.AddScoped<ProjectJA.Host.Theming.ThemeState>();
+builder.Services.AddScoped<ProjectJA.Host.Theming.AvatarState>();
 
 builder.Services.AddScheduler();
 

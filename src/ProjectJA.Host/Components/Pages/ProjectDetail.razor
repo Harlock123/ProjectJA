@@ -175,10 +175,16 @@ else
                                      Variant="Variant.Outlined" Min="0" Max="100"
                                      HelperText="Relative effort estimate; leave blank if unestimated." />
                     <MudSelect T="Guid?" Label="Assignee (optional)" @bind-Value="_draft.AssigneeId"
-                               Variant="Variant.Outlined" Dense="true" Clearable="true">
+                               Variant="Variant.Outlined" Dense="true" Clearable="true"
+                               ToStringFunc="NullableUserToString">
                         @foreach (var u in _users)
                         {
-                            <MudSelectItem T="Guid?" Value="@u.Id">@u.DisplayName</MudSelectItem>
+                            <MudSelectItem T="Guid?" Value="@((Guid?)u.Id)">
+                                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                                    <UserAvatar AvatarKey="@u.AvatarKey" DisplayName="@u.DisplayName" Size="Size.Small" />
+                                    <span>@u.DisplayName</span>
+                                </MudStack>
+                            </MudSelectItem>
                         }
                     </MudSelect>
                     @if (_isAdmin)
@@ -219,6 +225,9 @@ else
     private bool _isAdmin;
     private Draft _draft = new();
     private string? _error;
+
+    private string NullableUserToString(Guid? id) =>
+        id is null ? "" : (_users.FirstOrDefault(u => u.Id == id)?.DisplayName ?? "");
 
     protected override async Task OnInitializedAsync()
     {

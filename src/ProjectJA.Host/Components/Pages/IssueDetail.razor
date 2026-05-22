@@ -69,19 +69,31 @@ else
             </MudItem>
             <MudItem xs="12" sm="6">
                 <MudSelect T="Guid?" Label="Assignee" @bind-Value="_edit.AssigneeId" ReadOnly="@(!_canWrite)"
-                           Variant="Variant.Outlined" Dense="true" Clearable="true">
+                           Variant="Variant.Outlined" Dense="true" Clearable="true"
+                           ToStringFunc="NullableUserToString">
                     @foreach (var u in _users)
                     {
-                        <MudSelectItem T="Guid?" Value="@u.Id">@u.DisplayName</MudSelectItem>
+                        <MudSelectItem T="Guid?" Value="@((Guid?)u.Id)">
+                            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                                <UserAvatar AvatarKey="@u.AvatarKey" DisplayName="@u.DisplayName" Size="Size.Small" />
+                                <span>@u.DisplayName</span>
+                            </MudStack>
+                        </MudSelectItem>
                     }
                 </MudSelect>
             </MudItem>
             <MudItem xs="12" sm="6">
                 <MudSelect T="Guid" Label="Reporter" @bind-Value="_edit.ReporterId" ReadOnly="@(!_canWrite)"
-                           Variant="Variant.Outlined" Dense="true">
+                           Variant="Variant.Outlined" Dense="true"
+                           ToStringFunc="UserToString">
                     @foreach (var u in _users)
                     {
-                        <MudSelectItem T="Guid" Value="@u.Id">@u.DisplayName</MudSelectItem>
+                        <MudSelectItem T="Guid" Value="@u.Id">
+                            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                                <UserAvatar AvatarKey="@u.AvatarKey" DisplayName="@u.DisplayName" Size="Size.Small" />
+                                <span>@u.DisplayName</span>
+                            </MudStack>
+                        </MudSelectItem>
                     }
                 </MudSelect>
             </MudItem>
@@ -291,6 +303,12 @@ else
 
     private string CreatorName =>
         _issue is not null && _userNames.TryGetValue(_issue.CreatedById, out var n) ? n : "—";
+
+    private string UserToString(Guid id) =>
+        _users.FirstOrDefault(u => u.Id == id)?.DisplayName ?? "";
+
+    private string NullableUserToString(Guid? id) =>
+        id is null ? "" : UserToString(id.Value);
 
     protected override async Task OnInitializedAsync()
     {

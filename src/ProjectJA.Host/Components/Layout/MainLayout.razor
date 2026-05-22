@@ -6,6 +6,7 @@
 @using ProjectJA.Modules.Identity.Contracts
 @inject ThemeCatalog Catalog
 @inject ThemeState ThemeState
+@inject AvatarState AvatarState
 @inject AuthenticationStateProvider Auth
 @inject IUserPreferences Preferences
 
@@ -53,7 +54,7 @@
                            built-in Icon/Label activators. With ActivatorContent we
                            wire the click ourselves through an @ref. *@
                         <div @onclick="OpenUserMenuAsync" style="cursor:pointer;display:inline-flex;">
-                            <UserAvatar AvatarKey="@_myAvatarKey"
+                            <UserAvatar AvatarKey="@AvatarState.AvatarKey"
                                         DisplayName="@context.User.Identity?.Name"
                                         Size="Size.Medium" />
                         </div>
@@ -97,7 +98,6 @@
 
 @code {
     private bool _themeLoaded;
-    private string? _myAvatarKey;
     private MudMenu? _userMenu;
 
     private async Task OpenUserMenuAsync()
@@ -105,7 +105,13 @@
         if (_userMenu is not null) await _userMenu.OpenMenuAsync(EventArgs.Empty);
     }
 
-    protected override void OnInitialized() => ThemeState.Changed += OnThemeChanged;
+    protected override void OnInitialized()
+    {
+        ThemeState.Changed += OnThemeChanged;
+        AvatarState.Changed += OnAvatarChanged;
+    }
+
+    private void OnAvatarChanged() => InvokeAsync(StateHasChanged);
 
     // The theme preference read is deliberately NOT in OnInitializedAsync: the
     // whole circuit shares one scoped AppDbContext, and a DB call here would run
@@ -126,12 +132,16 @@
         {
             var pref = await Preferences.GetThemeAsync(userId, default);
             ThemeState.Set(Catalog.IsKnown(pref.ThemeKey) ? pref.ThemeKey : null, pref.Dark);
-            _myAvatarKey = await Preferences.GetAvatarKeyAsync(userId, default);
-            StateHasChanged();
+            var avatarKey = await Preferences.GetAvatarKeyAsync(userId, default);
+            AvatarState.Set(avatarKey);
         }
     }
 
     private void OnThemeChanged() => InvokeAsync(StateHasChanged);
 
-    public void Dispose() => ThemeState.Changed -= OnThemeChanged;
+    public void Dispose()
+    {
+        ThemeState.Changed -= OnThemeChanged;
+        AvatarState.Changed -= OnAvatarChanged;
+    }
 }

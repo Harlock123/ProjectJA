@@ -6,6 +6,7 @@
 @using ProjectJA.Host.Theming
 @using ProjectJA.SharedKernel.Tenancy
 @using System.Security.Claims
+@using ProjectJA.Modules.Identity.Contracts
 @using ProjectJA.Modules.Projects.Contracts
 @using ProjectJA.Modules.Projects.Domain
 @using ProjectJA.Modules.Workflows.Contracts
@@ -20,6 +21,7 @@
 @inject AuthenticationStateProvider Auth
 @inject IProjectQueries Projects
 @inject ISprintQueries SprintsQueries
+@inject IUserQueries Users
 @inject IWorkflowQueries WorkflowsQueries
 @inject ISnackbar Snackbar
 @inject IJSRuntime JS
@@ -73,8 +75,18 @@ else
                              title="@(_canWrite ? "Drag to move · double-click to edit" : "Double-click to view")"
                              @ondblclick="@(() => OpenEditAsync(issue.Id))"
                              style="@($"cursor:grab;background:{CardBackground()};border:1px solid {CardBorder()};border-radius:4px;padding:0.5rem 0.75rem;margin-bottom:0.5rem;")">
-                            <div style="@($"font-family:monospace;font-size:0.75rem;color:{CardKeyColor()};")">@_project.Key-@issue.Number</div>
-                            <div style="@($"font-size:0.9rem;color:{CardTitleColor()};")">@issue.Title</div>
+                            <div style="display:flex;align-items:flex-start;gap:0.5rem;">
+                                <div style="flex:1 1 auto;min-width:0;">
+                                    <div style="@($"font-family:monospace;font-size:0.75rem;color:{CardKeyColor()};")">@_project.Key-@issue.Number</div>
+                                    <div style="@($"font-size:0.9rem;color:{CardTitleColor()};")">@issue.Title</div>
+                                </div>
+                                @if (issue.AssigneeId is { } assignee && _userById.TryGetValue(assignee, out var au))
+                                {
+                                    <div style="flex:0 0 auto;">
+                                        <UserAvatar AvatarKey="@au.AvatarKey" DisplayName="@au.DisplayName" Size="Size.Small" />
+                                    </div>
+                                }
+                            </div>
                             @if (!string.IsNullOrWhiteSpace(issue.Description))
                             {
                                 <div style="@($"font-size:0.8rem;color:{CardDescColor()};margin-top:0.15rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;")">@issue.Description</div>
@@ -123,6 +135,7 @@ else
     private WorkflowView? _workflow;
     private IReadOnlyList<SprintSummary> _sprints = Array.Empty<SprintSummary>();
     private Dictionary<Guid, string> _sprintNames = new();
+    private Dictionary<Guid, UserSummary> _userById = new();
     // Filter value conventions: "all" | "backlog" | "<sprint-guid>".
     private string _filter = "all";
     private IDisposable? _subscription;
@@ -173,6 +186,10 @@ else
         _workflow = await WorkflowsQueries.GetForProjectAsync(ProjectId, default);
         _sprints = await SprintsQueries.ListForProjectAsync(ProjectId, default);
         _sprintNames = _sprints.ToDictionary(s => s.Id, s => s.Name);
+        // Used to render assignee avatars on cards. Org-wide pool is small in
+        // practice; one query per board reload is fine.
+        var users = await Users.ListAllAsync(default);
+        _userById = users.ToDictionary(u => u.Id);
         // Default filter: the active sprint if there is one — that's almost
         // always what users want to see when they hit the board.
         if (_filter == "all")
