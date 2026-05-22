@@ -47,12 +47,23 @@
                            class="mud-input" style="padding:0.4rem 0.6rem;border:1px solid #ccc;border-radius:4px;background:white;width:18rem;" />
                 </form>
 
-                <MudMenu Icon="@Icons.Material.Filled.AccountCircle" Color="Color.Inherit" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                <MudMenu @ref="_userMenu" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                    <ActivatorContent Context="menuCtx">
+                        @* MudBlazor only auto-wires click → ToggleMenuAsync on the
+                           built-in Icon/Label activators. With ActivatorContent we
+                           wire the click ourselves through an @ref. *@
+                        <div @onclick="OpenUserMenuAsync" style="cursor:pointer;display:inline-flex;">
+                            <UserAvatar AvatarKey="@_myAvatarKey"
+                                        DisplayName="@context.User.Identity?.Name"
+                                        Size="Size.Medium" />
+                        </div>
+                    </ActivatorContent>
+                    <ChildContent>
                     <MudMenuItem>
                         <MudText Typo="Typo.body2">@context.User.Identity?.Name</MudText>
                     </MudMenuItem>
                     <MudDivider />
-                    <MudMenuItem Href="/settings/appearance" Icon="@Icons.Material.Filled.Palette">Appearance</MudMenuItem>
+                    <MudMenuItem Href="/settings" Icon="@Icons.Material.Filled.Settings">Settings</MudMenuItem>
                     <MudMenuItem>
                         <form method="post" action="/logout" style="margin:0;width:100%;">
                             <AntiforgeryToken />
@@ -62,6 +73,7 @@
                             </button>
                         </form>
                     </MudMenuItem>
+                    </ChildContent>
                 </MudMenu>
             </Authorized>
             <NotAuthorized>
@@ -85,6 +97,13 @@
 
 @code {
     private bool _themeLoaded;
+    private string? _myAvatarKey;
+    private MudMenu? _userMenu;
+
+    private async Task OpenUserMenuAsync()
+    {
+        if (_userMenu is not null) await _userMenu.OpenMenuAsync(EventArgs.Empty);
+    }
 
     protected override void OnInitialized() => ThemeState.Changed += OnThemeChanged;
 
@@ -107,6 +126,8 @@
         {
             var pref = await Preferences.GetThemeAsync(userId, default);
             ThemeState.Set(Catalog.IsKnown(pref.ThemeKey) ? pref.ThemeKey : null, pref.Dark);
+            _myAvatarKey = await Preferences.GetAvatarKeyAsync(userId, default);
+            StateHasChanged();
         }
     }
 

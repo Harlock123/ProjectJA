@@ -1,0 +1,60 @@
+@using ProjectJA.Host.Theming
+@inject AvatarCatalog Avatars
+
+@{
+    var preset = Avatars.FindByKey(AvatarKey);
+    var bg = preset?.Color ?? FallbackColor(DisplayName ?? "?");
+    var title = string.IsNullOrWhiteSpace(DisplayName) ? null : DisplayName;
+}
+<MudAvatar Size="@Size" Style="@($"background:{bg};color:white;")" title="@title">
+    @if (preset is not null)
+    {
+        <MudIcon Icon="@preset.Icon" Size="@IconSize" Color="Color.Inherit" />
+    }
+    else
+    {
+        @Initials(DisplayName)
+    }
+</MudAvatar>
+
+@code {
+    /// <summary>Catalog key, or null to fall back to initials.</summary>
+    [Parameter] public string? AvatarKey { get; set; }
+
+    /// <summary>Used for the tooltip and for the initials fallback.</summary>
+    [Parameter] public string? DisplayName { get; set; }
+
+    [Parameter] public Size Size { get; set; } = Size.Small;
+
+    private Size IconSize => Size switch
+    {
+        Size.Large => Size.Medium,
+        Size.Medium => Size.Small,
+        _ => Size.Small,
+    };
+
+    private static string Initials(string? displayName)
+    {
+        if (string.IsNullOrWhiteSpace(displayName)) return "?";
+        var parts = displayName.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return "?";
+        if (parts.Length == 1) return parts[0].Substring(0, 1).ToUpperInvariant();
+        return (parts[0][..1] + parts[^1][..1]).ToUpperInvariant();
+    }
+
+    // Stable per-name fallback colour so two users without a preset don't both
+    // get the same circle. Uses a small palette of MudBlazor-ish hues.
+    private static readonly string[] FallbackPalette =
+    [
+        "#1976D2", "#388E3C", "#F57C00", "#7B1FA2",
+        "#0288D1", "#C2185B", "#5D4037", "#455A64",
+    ];
+
+    private static string FallbackColor(string seed)
+    {
+        if (string.IsNullOrEmpty(seed)) return FallbackPalette[0];
+        var h = 0;
+        foreach (var c in seed) h = (h * 31 + c) & 0x7FFFFFFF;
+        return FallbackPalette[h % FallbackPalette.Length];
+    }
+}

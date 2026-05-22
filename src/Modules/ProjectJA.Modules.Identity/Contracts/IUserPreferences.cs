@@ -9,4 +9,6 @@ public interface IUserPreferences
 {
     Task<ThemePreference> GetThemeAsync(Guid userId, CancellationToken ct);
     Task SetThemeAsync(Guid userId, string? themeKey, bool dark, CancellationToken ct);
+    Task<string?> GetAvatarKeyAsync(Guid userId, CancellationToken ct);
+    Task SetAvatarKeyAsync(Guid userId, string? avatarKey, CancellationToken ct);
 }

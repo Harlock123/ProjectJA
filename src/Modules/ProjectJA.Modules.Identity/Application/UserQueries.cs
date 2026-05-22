@@ -12,7 +12,7 @@ internal sealed class UserQueries(DbContext db) : IUserQueries
         return await db.Set<ApplicationUser>()
             .AsNoTracking()
             .Where(u => u.Id == userId)
-            .Select(u => new UserSummary(u.Id, u.Email!, BuildDisplayName(u)))
+            .Select(u => new UserSummary(u.Id, u.Email!, BuildDisplayName(u), u.AvatarKey))
             .FirstOrDefaultAsync(ct);
     }
 
@@ -25,7 +25,7 @@ internal sealed class UserQueries(DbContext db) : IUserQueries
         var rows = await db.Set<ApplicationUser>()
             .AsNoTracking()
             .Where(u => ids.Contains(u.Id))
-            .Select(u => new UserSummary(u.Id, u.Email!, BuildDisplayName(u)))
+            .Select(u => new UserSummary(u.Id, u.Email!, BuildDisplayName(u), u.AvatarKey))
             .ToListAsync(ct);
 
         return rows.ToDictionary(r => r.Id);
@@ -36,7 +36,7 @@ internal sealed class UserQueries(DbContext db) : IUserQueries
         return await db.Set<ApplicationUser>()
             .AsNoTracking()
             .OrderBy(u => u.FirstName).ThenBy(u => u.LastName).ThenBy(u => u.Email)
-            .Select(u => new UserSummary(u.Id, u.Email!, BuildDisplayName(u)))
+            .Select(u => new UserSummary(u.Id, u.Email!, BuildDisplayName(u), u.AvatarKey))
             .ToListAsync(ct);
     }
 

@@ -27,4 +27,21 @@ internal sealed class UserPreferences(DbContext db) : IUserPreferences
         user.ThemeDark = dark;
         await db.SaveChangesAsync(ct);
     }
+
+    public async Task<string?> GetAvatarKeyAsync(Guid userId, CancellationToken ct)
+    {
+        return await db.Set<ApplicationUser>()
+            .AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => u.AvatarKey)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task SetAvatarKeyAsync(Guid userId, string? avatarKey, CancellationToken ct)
+    {
+        var user = await db.Set<ApplicationUser>().FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null) return;
+        user.AvatarKey = avatarKey;
+        await db.SaveChangesAsync(ct);
+    }
 }

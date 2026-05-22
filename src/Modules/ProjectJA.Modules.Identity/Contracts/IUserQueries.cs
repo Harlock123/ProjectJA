@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 namespace ProjectJA.Modules.Identity.Contracts;
 
-public sealed record UserSummary(Guid Id, string Email, string DisplayName);
+public sealed record UserSummary(Guid Id, string Email, string DisplayName, string? AvatarKey = null);
 
 public interface IUserQueries
 {

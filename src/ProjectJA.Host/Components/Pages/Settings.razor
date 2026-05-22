@@ -1,0 +1,233 @@
+@page "/settings"
+@page "/settings/appearance"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@implements IDisposable
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Identity
+@using ProjectJA.Host.Theming
+@using ProjectJA.Modules.Identity.Contracts
+@using ProjectJA.Modules.Identity.Domain
+@inject ThemeCatalog Catalog
+@inject AvatarCatalog Avatars
+@inject ThemeState ThemeState
+@inject IUserPreferences Preferences
+@inject UserManager<ApplicationUser> Users
+@inject AuthenticationStateProvider Auth
+@inject ISnackbar Snackbar
+
+<PageTitle>Settings</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Settings</MudText>
+
+<MudTabs Elevation="0" Rounded="true" KeepPanelsAlive="true">
+    @* ------------------------------------------------------------ Appearance *@
+    <MudTabPanel Text="Appearance" Icon="@Icons.Material.Filled.Palette">
+        <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-4">
+            Pick a theme and light/dark mode. Changes apply immediately and are saved to your account.
+        </MudText>
+
+        <MudPaper Class="pa-4 mb-4" Elevation="1">
+            <MudSwitch T="bool" Value="_isDark" ValueChanged="OnDarkChangedAsync"
+                       Label="Dark mode" Color="Color.Primary" />
+        </MudPaper>
+
+        <MudGrid Spacing="3">
+            @foreach (var opt in Catalog.Options)
+            {
+                var selected = opt.Key == _selectedThemeKey;
+                <MudItem xs="12" sm="6" md="4">
+                    <MudPaper Class="pa-4" Elevation="@(selected ? 6 : 1)"
+                              Style="@($"cursor:pointer;border:2px solid {(selected ? "var(--mud-palette-primary)" : "transparent")};")"
+                              @onclick="@(() => SelectThemeAsync(opt.Key))">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                            <MudText Typo="Typo.subtitle1" Style="font-weight:600;">@opt.Name</MudText>
+                            <MudSpacer />
+                            @if (selected)
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Primary" />
+                            }
+                        </MudStack>
+                        <MudStack Row="true" Spacing="1">
+                            @foreach (var c in opt.Swatches)
+                            {
+                                <div style="@($"width:2rem;height:2rem;border-radius:4px;background:{c};border:1px solid rgba(0,0,0,0.15);")"></div>
+                            }
+                        </MudStack>
+                    </MudPaper>
+                </MudItem>
+            }
+        </MudGrid>
+    </MudTabPanel>
+
+    @* ------------------------------------------------------------ Avatar *@
+    <MudTabPanel Text="Avatar" Icon="@Icons.Material.Filled.AccountCircle">
+        <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-4">
+            Pick the small circle that represents you across the app. Click again to clear back to initials.
+        </MudText>
+
+        <MudGrid Spacing="2">
+            @foreach (var av in Avatars.Options)
+            {
+                var selected = av.Key == _selectedAvatarKey;
+                <MudItem>
+                    <div style="@($"cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:0.25rem;padding:0.5rem;border-radius:8px;border:2px solid {(selected ? "var(--mud-palette-primary)" : "transparent")};")"
+                         @onclick="@(() => SelectAvatarAsync(av.Key))" title="@av.Label">
+                        <MudAvatar Size="Size.Large" Style="@($"background:{av.Color};color:white;")">
+                            <MudIcon Icon="@av.Icon" Color="Color.Inherit" />
+                        </MudAvatar>
+                        <MudText Typo="Typo.caption">@av.Label</MudText>
+                    </div>
+                </MudItem>
+            }
+        </MudGrid>
+    </MudTabPanel>
+
+    @* ------------------------------------------------------------ Password *@
+    <MudTabPanel Text="Password" Icon="@Icons.Material.Filled.Lock">
+        <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-4">
+            Change your password. The new password must meet the same rules used at sign-up
+            (minimum 8 characters).
+        </MudText>
+
+        <MudPaper Class="pa-4" Elevation="1" Style="max-width:32rem;">
+            <MudStack Spacing="3">
+                <MudTextField Label="Current password" @bind-Value="_currentPassword"
+                              InputType="InputType.Password" Variant="Variant.Outlined"
+                              autocomplete="current-password" />
+                <MudTextField Label="New password" @bind-Value="_newPassword"
+                              InputType="InputType.Password" Variant="Variant.Outlined"
+                              autocomplete="new-password"
+                              HelperText="At least 8 characters." />
+                <MudTextField Label="Confirm new password" @bind-Value="_confirmPassword"
+                              InputType="InputType.Password" Variant="Variant.Outlined"
+                              autocomplete="new-password" />
+                @if (_passwordError is not null) { <MudAlert Severity="Severity.Error">@_passwordError</MudAlert> }
+                @if (_passwordSuccess is not null) { <MudAlert Severity="Severity.Success">@_passwordSuccess</MudAlert> }
+                <div>
+                    <MudButton OnClick="ChangePasswordAsync" Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Save"
+                               Disabled="@(!CanSubmitPassword || _passwordSubmitting)">
+                        Change password
+                    </MudButton>
+                </div>
+            </MudStack>
+        </MudPaper>
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    // ---- Appearance ----
+    private string _selectedThemeKey = ThemeCatalog.DefaultKey;
+    private bool _isDark;
+    private Guid _userId;
+
+    // ---- Avatar ----
+    private string? _selectedAvatarKey;
+
+    // ---- Password ----
+    private string _currentPassword = "";
+    private string _newPassword = "";
+    private string _confirmPassword = "";
+    private string? _passwordError;
+    private string? _passwordSuccess;
+    private bool _passwordSubmitting;
+
+    private bool CanSubmitPassword =>
+        !string.IsNullOrWhiteSpace(_currentPassword)
+        && !string.IsNullOrWhiteSpace(_newPassword)
+        && !string.IsNullOrWhiteSpace(_confirmPassword);
+
+    protected override async Task OnInitializedAsync()
+    {
+        // No DB read for the theme here on purpose — MainLayout owns the single
+        // per-circuit preference load so the shared scoped AppDbContext isn't
+        // hit concurrently. We sync from ThemeState and subscribe for updates.
+        ThemeState.Changed += OnThemeStateChanged;
+        SyncFromState();
+
+        var authState = await Auth.GetAuthenticationStateAsync();
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _userId);
+        // Avatar lives outside ThemeState — read it once on init.
+        _selectedAvatarKey = await Preferences.GetAvatarKeyAsync(_userId, default);
+    }
+
+    private void SyncFromState()
+    {
+        _selectedThemeKey = Catalog.IsKnown(ThemeState.ThemeKey)
+            ? ThemeState.ThemeKey!
+            : ThemeCatalog.DefaultKey;
+        _isDark = ThemeState.IsDark;
+    }
+
+    private void OnThemeStateChanged()
+    {
+        SyncFromState();
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => ThemeState.Changed -= OnThemeStateChanged;
+
+    private async Task SelectThemeAsync(string key)
+    {
+        _selectedThemeKey = key;
+        await ApplyAndSaveThemeAsync();
+    }
+
+    private async Task OnDarkChangedAsync(bool isDark)
+    {
+        _isDark = isDark;
+        await ApplyAndSaveThemeAsync();
+    }
+
+    private async Task ApplyAndSaveThemeAsync()
+    {
+        ThemeState.Set(_selectedThemeKey, _isDark);
+        await Preferences.SetThemeAsync(_userId, _selectedThemeKey, _isDark, default);
+        Snackbar.Add("Appearance saved.", Severity.Success);
+    }
+
+    private async Task SelectAvatarAsync(string key)
+    {
+        // Re-clicking the active avatar clears it back to initials.
+        var newKey = _selectedAvatarKey == key ? null : key;
+        _selectedAvatarKey = newKey;
+        await Preferences.SetAvatarKeyAsync(_userId, newKey, default);
+        Snackbar.Add(newKey is null ? "Avatar cleared." : "Avatar saved.", Severity.Success);
+    }
+
+    private async Task ChangePasswordAsync()
+    {
+        _passwordError = null;
+        _passwordSuccess = null;
+        if (_newPassword != _confirmPassword)
+        {
+            _passwordError = "New password and confirmation don't match.";
+            return;
+        }
+
+        _passwordSubmitting = true;
+        try
+        {
+            var user = await Users.FindByIdAsync(_userId.ToString());
+            if (user is null)
+            {
+                _passwordError = "Couldn't load your account. Try signing out and back in.";
+                return;
+            }
+            var result = await Users.ChangePasswordAsync(user, _currentPassword, _newPassword);
+            if (!result.Succeeded)
+            {
+                _passwordError = string.Join(" ", result.Errors.Select(e => e.Description));
+                return;
+            }
+            _passwordSuccess = "Password changed.";
+            _currentPassword = _newPassword = _confirmPassword = "";
+            Snackbar.Add("Password changed.", Severity.Success);
+        }
+        finally
+        {
+            _passwordSubmitting = false;
+        }
+    }
+}

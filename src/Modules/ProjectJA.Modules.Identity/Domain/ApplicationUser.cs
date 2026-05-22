@@ -24,4 +24,7 @@ public sealed class ApplicationUser : IdentityUser<Guid>
 
     /// <summary>Whether the user prefers the dark variant of their theme.</summary>
     public bool ThemeDark { get; set; }
+
+    /// <summary>Selected avatar preset key (see Host AvatarCatalog). Null = fall back to initials.</summary>
+    public string? AvatarKey { get; set; }
 }

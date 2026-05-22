@@ -287,9 +287,14 @@
                                                   Style="@(mine && _editingCommentId != c.Id ? "cursor:pointer;" : null)"
                                                   title="@(mine && _editingCommentId != c.Id ? "Double-click to edit or delete" : null)"
                                                   @ondblclick="@(() => OnCommentDblClick(c))">
-                                            <MudText Typo="Typo.caption" Color="Color.Default">
-                                                <strong>@AuthorName(c.AuthorId)</strong> · @c.CreatedAt.ToString("yyyy-MM-dd HH:mm")
-                                            </MudText>
+                                            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                                                <UserAvatar AvatarKey="@AuthorAvatarKey(c.AuthorId)"
+                                                            DisplayName="@AuthorName(c.AuthorId)"
+                                                            Size="Size.Small" />
+                                                <MudText Typo="Typo.caption" Color="Color.Default">
+                                                    <strong>@AuthorName(c.AuthorId)</strong> · @c.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                                                </MudText>
+                                            </MudStack>
                                             @if (_editingCommentId == c.Id)
                                             {
                                                 <MudTextField @bind-Value="_editBody" Variant="Variant.Outlined"
@@ -479,6 +484,9 @@
 
     private string AuthorName(Guid id) =>
         _userNames.TryGetValue(id, out var n) ? n : "(unknown)";
+
+    private string? AuthorAvatarKey(Guid id) =>
+        _users.FirstOrDefault(u => u.Id == id)?.AvatarKey;
 
     private async Task SaveAsync()
     {
