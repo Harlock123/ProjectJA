@@ -174,10 +174,73 @@ internal static class AuthEndpoints
                 return Results.LocalRedirect(
                     string.IsNullOrWhiteSpace(returnUrl) ? "/projects" : returnUrl);
 
+            // 2FA gate: password was correct but the user has TwoFactorEnabled.
+            // SignInManager has set the TwoFactorUserId cookie; route them to
+            // the code-entry page. rememberMe + returnUrl need to flow through
+            // so the eventual cookie matches what they asked for.
+            if (result.RequiresTwoFactor)
+            {
+                var qs = $"?rememberMe={(rememberMe ? "true" : "false")}";
+                if (!string.IsNullOrWhiteSpace(returnUrl))
+                    qs += $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
+                return Results.LocalRedirect($"/login/2fa{qs}");
+            }
+
             var reason = result.IsLockedOut ? "locked"
                        : result.IsNotAllowed ? "notallowed"
                        : "invalid";
             return Results.Redirect($"/login?error={reason}");
+        });
+
+        // Second-factor submission. The TwoFactorUserId cookie was set by the
+        // previous /signin PasswordSignInAsync call — SignInManager reads it
+        // to identify the in-flight user, so we don't get an email here.
+        app.MapPost("/signin-2fa", async (
+            HttpContext ctx,
+            IAntiforgery antiforgery,
+            SignInManager<ApplicationUser> signIn) =>
+        {
+            if (await AntiforgeryFailureAsync(antiforgery, ctx) is { } af) return af;
+
+            var form = await ctx.Request.ReadFormAsync();
+            var rawCode = form["code"].ToString() ?? string.Empty;
+            var rememberMe = form["rememberMe"] == "true";
+            var rememberClient = form["rememberClient"] == "true";
+            var useRecovery = form["recovery"] == "true";
+            var returnUrl = form["returnUrl"].ToString();
+
+            // If the temp 2FA cookie expired (or the user opened /signin-2fa
+            // directly), start over.
+            var pendingUser = await signIn.GetTwoFactorAuthenticationUserAsync();
+            if (pendingUser is null)
+                return Results.Redirect("/login?error=expired");
+
+            Microsoft.AspNetCore.Identity.SignInResult result;
+            if (useRecovery)
+            {
+                // Recovery codes are stored normalised (no spaces / dashes); be
+                // forgiving about how the user pasted theirs.
+                var cleaned = new string(rawCode.Where(c => !char.IsWhiteSpace(c) && c != '-').ToArray());
+                result = await signIn.TwoFactorRecoveryCodeSignInAsync(cleaned);
+            }
+            else
+            {
+                // TOTP: 6 digits, strip whitespace just in case.
+                var token = new string(rawCode.Where(char.IsDigit).ToArray());
+                result = await signIn.TwoFactorAuthenticatorSignInAsync(
+                    token, rememberMe, rememberClient);
+            }
+
+            if (result.Succeeded)
+                return Results.LocalRedirect(
+                    string.IsNullOrWhiteSpace(returnUrl) ? "/projects" : returnUrl);
+
+            var reason = result.IsLockedOut ? "locked" : "invalid2fa";
+            var qs = $"?rememberMe={(rememberMe ? "true" : "false")}&error={reason}";
+            if (useRecovery) qs += "&recovery=true";
+            if (!string.IsNullOrWhiteSpace(returnUrl))
+                qs += $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
+            return Results.LocalRedirect($"/login/2fa{qs}");
         });
 
         // Accepting an invite creates the user AND signs them in, so it has

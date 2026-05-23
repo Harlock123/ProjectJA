@@ -1,0 +1,121 @@
+@page "/login/2fa"
+
+<PageTitle>Two-factor sign-in</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Small" Class="mt-8">
+    <MudPaper Class="pa-6" Elevation="2">
+        <MudText Typo="Typo.h5" GutterBottom="true">Two-factor sign-in</MudText>
+        <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-4">
+            @(Recovery == "true"
+                ? "Enter one of your one-time recovery codes."
+                : "Enter the 6-digit code from your authenticator app.")
+        </MudText>
+
+        @* Plain HTML form posting cross-document to /signin-2fa for the same
+           reason Login.razor does: cookie writes can't happen inside an
+           interactive Blazor circuit, so we need a real HTTP request to let
+           SignInManager finish the sign-in. *@
+        <form method="post" action="/signin-2fa">
+            <AntiforgeryToken />
+            <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+            <input type="hidden" name="rememberMe" value="@(RememberMe ?? "false")" />
+            <input type="hidden" name="recovery" value="@(Recovery == "true" ? "true" : "false")" />
+            <MudStack Spacing="3">
+                <div>
+                    <label for="2fa-code" class="mud-typography mud-typography-body2">
+                        @(Recovery == "true" ? "Recovery code" : "Authenticator code")
+                    </label>
+                    <input id="2fa-code" name="code" type="text"
+                           inputmode="@(Recovery == "true" ? "text" : "numeric")"
+                           autocomplete="one-time-code" autofocus required
+                           class="ssr-input"
+                           placeholder="@(Recovery == "true" ? "xxxx-xxxx" : "000000")" />
+                </div>
+                @if (Recovery != "true")
+                {
+                    @* Skip the prompt for 14 days on this browser. Identity
+                       persists a TwoFactorRememberMe cookie when this is set;
+                       no remember-this-browser for recovery codes (they're
+                       inherently single-use bypasses, not a routine sign-in). *@
+                    <label class="mud-typography mud-typography-body2" style="display:flex;align-items:center;gap:0.5rem;">
+                        <input type="checkbox" name="rememberClient" value="true" />
+                        Remember this browser for 14 days
+                    </label>
+                }
+                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled"
+                           Color="Color.Primary" FullWidth="true">
+                    Verify
+                </MudButton>
+                @if (_error is not null)
+                {
+                    <MudAlert Severity="Severity.Error">@_error</MudAlert>
+                }
+            </MudStack>
+        </form>
+
+        <MudDivider Class="my-4" />
+
+        @* Toggle between TOTP and recovery code mode without losing
+           rememberMe/returnUrl. *@
+        @{
+            var toggleHref = Recovery == "true"
+                ? BuildToggleUrl(useRecovery: false)
+                : BuildToggleUrl(useRecovery: true);
+            var toggleLabel = Recovery == "true"
+                ? "Use authenticator code instead"
+                : "Use a recovery code instead";
+        }
+        <MudText Typo="Typo.body2" Align="Align.Center">
+            <MudLink Href="@toggleHref">@toggleLabel</MudLink>
+        </MudText>
+        <MudText Typo="Typo.body2" Align="Align.Center" Class="mt-2">
+            <MudLink Href="/login">Cancel and start over</MudLink>
+        </MudText>
+    </MudPaper>
+</MudContainer>
+
+<style>
+    .ssr-input {
+        width: 100%;
+        padding: 0.6rem 0.75rem;
+        border: 1px solid rgba(0,0,0,0.23);
+        border-radius: 4px;
+        font: inherit;
+        box-sizing: border-box;
+        background: white;
+        letter-spacing: 0.15em;
+        font-family: monospace;
+        font-size: 1.1rem;
+    }
+    .ssr-input:focus { outline: 2px solid #594ae2; outline-offset: -1px; }
+</style>
+
+@code {
+    [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+    [SupplyParameterFromQuery] public string? RememberMe { get; set; }
+    [SupplyParameterFromQuery] public string? Recovery { get; set; }
+    [SupplyParameterFromQuery] public string? Error { get; set; }
+
+    private string? _error;
+
+    protected override void OnInitialized()
+    {
+        _error = Error switch
+        {
+            "invalid2fa" => Recovery == "true"
+                ? "That recovery code isn't valid (or has already been used)."
+                : "That code didn't match. Codes rotate every 30 seconds — try the next one.",
+            "locked" => "Account locked.",
+            _ => null,
+        };
+    }
+
+    private string BuildToggleUrl(bool useRecovery)
+    {
+        var qs = $"?rememberMe={(RememberMe == "true" ? "true" : "false")}";
+        if (useRecovery) qs += "&recovery=true";
+        if (!string.IsNullOrWhiteSpace(ReturnUrl))
+            qs += $"&returnUrl={Uri.EscapeDataString(ReturnUrl)}";
+        return $"/login/2fa{qs}";
+    }
+}

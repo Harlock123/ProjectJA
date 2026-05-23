@@ -8,6 +8,7 @@
 @using ProjectJA.Host.Theming
 @using ProjectJA.Modules.Identity.Contracts
 @using ProjectJA.Modules.Identity.Domain
+@using QRCoder
 @inject ThemeCatalog Catalog
 @inject AvatarCatalog Avatars
 @inject ThemeState ThemeState
@@ -115,6 +116,178 @@
             </MudStack>
         </MudPaper>
     </MudTabPanel>
+
+    @* ------------------------------------------------------------ Security (2FA) *@
+    <MudTabPanel Text="Security" Icon="@Icons.Material.Filled.Security">
+        <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-4">
+            Add a second factor to your sign-in using a TOTP authenticator app
+            (Microsoft Authenticator, Google Authenticator, 1Password, Authy, etc.).
+        </MudText>
+
+        @if (_twoFactor == TwoFactorUiState.Loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (_twoFactor == TwoFactorUiState.NotEnrolled)
+        {
+            <MudPaper Class="pa-4" Elevation="1" Style="max-width:36rem;">
+                <MudStack Spacing="3">
+                    <MudAlert Severity="Severity.Info" Dense="true">
+                        Two-factor authentication is <strong>not enabled</strong>.
+                    </MudAlert>
+                    <MudText Typo="Typo.body2">
+                        Click below to generate a new authenticator key. You'll scan a QR code
+                        or paste the key into your authenticator app, then enter the 6-digit
+                        code it shows to confirm setup.
+                    </MudText>
+                    <div>
+                        <MudButton OnClick="BeginEnrollmentAsync" Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Security"
+                                   Disabled="@_twoFactorBusy">
+                            Set up authenticator app
+                        </MudButton>
+                    </div>
+                </MudStack>
+            </MudPaper>
+        }
+        else if (_twoFactor == TwoFactorUiState.Enrolling)
+        {
+            <MudPaper Class="pa-4" Elevation="1" Style="max-width:36rem;">
+                <MudStack Spacing="3">
+                    <MudText Typo="Typo.subtitle1" Style="font-weight:600;">1. Scan with your authenticator app</MudText>
+                    @if (!string.IsNullOrEmpty(_qrSvg))
+                    {
+                        <div style="background:white;padding:1rem;border:1px solid rgba(0,0,0,0.12);border-radius:4px;display:inline-block;">
+                            @((MarkupString)_qrSvg)
+                        </div>
+                    }
+                    <MudText Typo="Typo.body2" Color="Color.Default">
+                        Can't scan? Type this key into your app manually:
+                    </MudText>
+                    <MudPaper Class="pa-2" Outlined="true"
+                              Style="font-family:monospace;letter-spacing:0.1em;font-size:1rem;background:transparent;">
+                        @_manualKey
+                    </MudPaper>
+
+                    <MudDivider />
+
+                    <MudText Typo="Typo.subtitle1" Style="font-weight:600;">2. Verify the code your app shows</MudText>
+                    <MudTextField Label="6-digit code" @bind-Value="_verifyCode"
+                                  Variant="Variant.Outlined" Class="mt-2"
+                                  Placeholder="000000" MaxLength="8"
+                                  HelperText="Codes rotate every 30 seconds." />
+                    @if (_twoFactorError is not null) { <MudAlert Severity="Severity.Error">@_twoFactorError</MudAlert> }
+                    <MudStack Row="true" Spacing="2">
+                        <MudButton OnClick="VerifyAndEnableAsync" Variant="Variant.Filled" Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.CheckCircle"
+                                   Disabled="@(_twoFactorBusy || string.IsNullOrWhiteSpace(_verifyCode))">
+                            Verify &amp; enable
+                        </MudButton>
+                        <MudButton OnClick="CancelEnrollmentAsync" Variant="Variant.Text">Cancel</MudButton>
+                    </MudStack>
+                </MudStack>
+            </MudPaper>
+        }
+        else if (_twoFactor == TwoFactorUiState.ShowingRecoveryCodes)
+        {
+            <MudPaper Class="pa-4" Elevation="1" Style="max-width:36rem;">
+                <MudStack Spacing="3">
+                    <MudAlert Severity="Severity.Success" Dense="true">
+                        Two-factor authentication is <strong>now enabled</strong>.
+                    </MudAlert>
+                    <MudText Typo="Typo.subtitle1" Style="font-weight:600;">Recovery codes</MudText>
+                    <MudAlert Severity="Severity.Warning" Dense="true">
+                        Save these codes somewhere safe — each one can be used <strong>once</strong>
+                        to sign in if you lose access to your authenticator app. They will not be
+                        shown again.
+                    </MudAlert>
+                    <MudPaper Outlined="true" Class="pa-3"
+                              Style="font-family:monospace;font-size:1rem;line-height:1.6;background:transparent;">
+                        @foreach (var rc in _recoveryCodes)
+                        {
+                            <div>@rc</div>
+                        }
+                    </MudPaper>
+                    <div>
+                        <MudButton OnClick="DismissRecoveryCodes" Variant="Variant.Filled" Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Done">
+                            I've saved them
+                        </MudButton>
+                    </div>
+                </MudStack>
+            </MudPaper>
+        }
+        else if (_twoFactor == TwoFactorUiState.Enrolled)
+        {
+            <MudPaper Class="pa-4" Elevation="1" Style="max-width:36rem;">
+                <MudStack Spacing="3">
+                    <MudAlert Severity="Severity.Success" Dense="true">
+                        Two-factor authentication is <strong>enabled</strong>.
+                    </MudAlert>
+
+                    @* Both actions require a password re-prompt: regenerating
+                       codes mints new bypass tokens, disabling removes the
+                       second factor entirely. Hijacked sessions shouldn't be
+                       able to do either silently. *@
+                    <MudStack Row="true" Spacing="2">
+                        <MudButton OnClick="@(() => _pendingAction = TwoFactorAction.Regenerate)"
+                                   Variant="Variant.Outlined" Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Refresh"
+                                   Disabled="@(_pendingAction != TwoFactorAction.None || _twoFactorBusy)">
+                            Regenerate recovery codes
+                        </MudButton>
+                        <MudButton OnClick="@(() => _pendingAction = TwoFactorAction.Disable)"
+                                   Variant="Variant.Outlined" Color="Color.Error"
+                                   StartIcon="@Icons.Material.Filled.RemoveModerator"
+                                   Disabled="@(_pendingAction != TwoFactorAction.None || _twoFactorBusy)">
+                            Disable 2FA
+                        </MudButton>
+                    </MudStack>
+
+                    @if (_pendingAction != TwoFactorAction.None)
+                    {
+                        <MudDivider />
+                        <MudText Typo="Typo.subtitle2">
+                            @(_pendingAction == TwoFactorAction.Disable
+                                ? "Confirm: disable two-factor authentication"
+                                : "Confirm: regenerate recovery codes")
+                        </MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Default">
+                            @(_pendingAction == TwoFactorAction.Disable
+                                ? "After disabling, sign-in requires only your password. Your authenticator key and unused recovery codes will be cleared."
+                                : "All ten old codes will be invalidated and replaced. Save the new codes when they appear.")
+                        </MudText>
+                        <MudTextField Label="Current password" @bind-Value="_actionPassword"
+                                      InputType="InputType.Password" Variant="Variant.Outlined"
+                                      autocomplete="current-password" />
+                        @if (_twoFactorError is not null) { <MudAlert Severity="Severity.Error">@_twoFactorError</MudAlert> }
+                        <MudStack Row="true" Spacing="2">
+                            @if (_pendingAction == TwoFactorAction.Disable)
+                            {
+                                <MudButton OnClick="DisableTwoFactorAsync"
+                                           Variant="Variant.Filled" Color="Color.Error"
+                                           StartIcon="@Icons.Material.Filled.RemoveModerator"
+                                           Disabled="@(_twoFactorBusy || string.IsNullOrWhiteSpace(_actionPassword))">
+                                    Disable 2FA
+                                </MudButton>
+                            }
+                            else
+                            {
+                                <MudButton OnClick="RegenerateRecoveryCodesAsync"
+                                           Variant="Variant.Filled" Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.Refresh"
+                                           Disabled="@(_twoFactorBusy || string.IsNullOrWhiteSpace(_actionPassword))">
+                                    Regenerate codes
+                                </MudButton>
+                            }
+                            <MudButton OnClick="CancelPendingAction" Variant="Variant.Text">Cancel</MudButton>
+                        </MudStack>
+                    }
+                </MudStack>
+            </MudPaper>
+        }
+    </MudTabPanel>
 </MudTabs>
 
 @code {
@@ -125,6 +298,20 @@
 
     // ---- Avatar ----
     private string? _selectedAvatarKey;
+
+    // ---- Security (2FA) ----
+    private enum TwoFactorUiState { Loading, NotEnrolled, Enrolling, ShowingRecoveryCodes, Enrolled }
+    private enum TwoFactorAction { None, Disable, Regenerate }
+    private TwoFactorUiState _twoFactor = TwoFactorUiState.Loading;
+    private TwoFactorAction _pendingAction = TwoFactorAction.None;
+    private bool _twoFactorBusy;
+    private string? _twoFactorError;
+    private string? _manualKey;
+    private string? _qrSvg;
+    private string _verifyCode = "";
+    private string _actionPassword = "";
+    private string[] _recoveryCodes = Array.Empty<string>();
+    private const string TotpIssuer = "ProjectJA";
 
     // ---- Password ----
     private string _currentPassword = "";
@@ -151,6 +338,14 @@
         Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _userId);
         // Avatar lives outside ThemeState — read it once on init.
         _selectedAvatarKey = await Preferences.GetAvatarKeyAsync(_userId, default);
+
+        // 2FA: NotEnrolled / Enrolled is derived from Identity's TwoFactorEnabled
+        // flag. Enrolling / ShowingRecoveryCodes are transient UI states the user
+        // can only enter by clicking through this page.
+        var user = await Users.FindByIdAsync(_userId.ToString());
+        _twoFactor = user is { TwoFactorEnabled: true }
+            ? TwoFactorUiState.Enrolled
+            : TwoFactorUiState.NotEnrolled;
     }
 
     private void SyncFromState()
@@ -233,5 +428,187 @@
         {
             _passwordSubmitting = false;
         }
+    }
+
+    // ---- 2FA enrollment ----
+
+    private async Task BeginEnrollmentAsync()
+    {
+        _twoFactorError = null;
+        _twoFactorBusy = true;
+        try
+        {
+            var user = await Users.FindByIdAsync(_userId.ToString());
+            if (user is null) { _twoFactorError = "Couldn't load your account."; return; }
+
+            // ResetAuthenticatorKeyAsync ALWAYS issues a new key (idempotent in
+            // the sense that any prior, un-confirmed key is replaced). That's
+            // what we want — clicking "Set up" should always give a fresh start.
+            await Users.ResetAuthenticatorKeyAsync(user);
+            var rawKey = await Users.GetAuthenticatorKeyAsync(user);
+            if (string.IsNullOrEmpty(rawKey))
+            {
+                _twoFactorError = "Couldn't generate an authenticator key.";
+                return;
+            }
+
+            _manualKey = FormatManualKey(rawKey);
+            var email = user.Email ?? user.UserName ?? "user";
+            var otpauth = $"otpauth://totp/{Uri.EscapeDataString(TotpIssuer)}:{Uri.EscapeDataString(email)}"
+                          + $"?secret={rawKey}&issuer={Uri.EscapeDataString(TotpIssuer)}&digits=6&period=30";
+            _qrSvg = GenerateQrSvg(otpauth);
+            _verifyCode = "";
+            _twoFactor = TwoFactorUiState.Enrolling;
+        }
+        finally
+        {
+            _twoFactorBusy = false;
+        }
+    }
+
+    private async Task VerifyAndEnableAsync()
+    {
+        _twoFactorError = null;
+        _twoFactorBusy = true;
+        try
+        {
+            var user = await Users.FindByIdAsync(_userId.ToString());
+            if (user is null) { _twoFactorError = "Couldn't load your account."; return; }
+
+            // Accept the code with whitespace and dashes stripped — different
+            // apps copy with varying separators.
+            var token = new string((_verifyCode ?? "").Where(char.IsDigit).ToArray());
+            var ok = await Users.VerifyTwoFactorTokenAsync(
+                user, Users.Options.Tokens.AuthenticatorTokenProvider, token);
+            if (!ok)
+            {
+                _twoFactorError = "That code didn't match. Codes rotate every 30 seconds — try the next one.";
+                return;
+            }
+
+            var enableResult = await Users.SetTwoFactorEnabledAsync(user, true);
+            if (!enableResult.Succeeded)
+            {
+                _twoFactorError = string.Join(" ", enableResult.Errors.Select(e => e.Description));
+                return;
+            }
+
+            var codes = await Users.GenerateNewTwoFactorRecoveryCodesAsync(user, 10);
+            _recoveryCodes = codes?.ToArray() ?? Array.Empty<string>();
+            _twoFactor = TwoFactorUiState.ShowingRecoveryCodes;
+            Snackbar.Add("Two-factor authentication enabled.", Severity.Success);
+        }
+        finally
+        {
+            _twoFactorBusy = false;
+        }
+    }
+
+    private Task CancelEnrollmentAsync()
+    {
+        _twoFactorError = null;
+        _manualKey = null;
+        _qrSvg = null;
+        _verifyCode = "";
+        _twoFactor = TwoFactorUiState.NotEnrolled;
+        return Task.CompletedTask;
+    }
+
+    private void DismissRecoveryCodes()
+    {
+        _recoveryCodes = Array.Empty<string>();
+        _twoFactor = TwoFactorUiState.Enrolled;
+    }
+
+    private void CancelPendingAction()
+    {
+        _pendingAction = TwoFactorAction.None;
+        _actionPassword = "";
+        _twoFactorError = null;
+    }
+
+    private async Task DisableTwoFactorAsync()
+    {
+        _twoFactorError = null;
+        _twoFactorBusy = true;
+        try
+        {
+            var user = await Users.FindByIdAsync(_userId.ToString());
+            if (user is null) { _twoFactorError = "Couldn't load your account."; return; }
+            if (!await Users.CheckPasswordAsync(user, _actionPassword))
+            {
+                _twoFactorError = "That password is incorrect.";
+                return;
+            }
+
+            var result = await Users.SetTwoFactorEnabledAsync(user, false);
+            if (!result.Succeeded)
+            {
+                _twoFactorError = string.Join(" ", result.Errors.Select(e => e.Description));
+                return;
+            }
+            // Rotate the authenticator key so the old QR / manual key is dead.
+            // Identity has no public Clear; resetting after disable leaves a
+            // fresh key that's only meaningful if 2FA is re-enabled later.
+            await Users.ResetAuthenticatorKeyAsync(user);
+
+            _pendingAction = TwoFactorAction.None;
+            _actionPassword = "";
+            _twoFactor = TwoFactorUiState.NotEnrolled;
+            Snackbar.Add("Two-factor authentication disabled.", Severity.Success);
+        }
+        finally
+        {
+            _twoFactorBusy = false;
+        }
+    }
+
+    private async Task RegenerateRecoveryCodesAsync()
+    {
+        _twoFactorError = null;
+        _twoFactorBusy = true;
+        try
+        {
+            var user = await Users.FindByIdAsync(_userId.ToString());
+            if (user is null) { _twoFactorError = "Couldn't load your account."; return; }
+            if (!await Users.CheckPasswordAsync(user, _actionPassword))
+            {
+                _twoFactorError = "That password is incorrect.";
+                return;
+            }
+
+            var codes = await Users.GenerateNewTwoFactorRecoveryCodesAsync(user, 10);
+            _recoveryCodes = codes?.ToArray() ?? Array.Empty<string>();
+            _pendingAction = TwoFactorAction.None;
+            _actionPassword = "";
+            _twoFactor = TwoFactorUiState.ShowingRecoveryCodes;
+            Snackbar.Add("New recovery codes generated.", Severity.Success);
+        }
+        finally
+        {
+            _twoFactorBusy = false;
+        }
+    }
+
+    // Group the secret in 4-char blocks so it's easier to type into an app.
+    private static string FormatManualKey(string raw)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (var i = 0; i < raw.Length; i++)
+        {
+            if (i > 0 && i % 4 == 0) sb.Append(' ');
+            sb.Append(char.ToUpperInvariant(raw[i]));
+        }
+        return sb.ToString();
+    }
+
+    // QRCoder's SvgQRCode is dependency-free (no SkiaSharp / System.Drawing).
+    // Inline SVG renders straight into the page via MarkupString.
+    private static string GenerateQrSvg(string content)
+    {
+        using var gen = new QRCodeGenerator();
+        var data = gen.CreateQrCode(content, QRCodeGenerator.ECCLevel.Q);
+        var svg = new SvgQRCode(data);
+        return svg.GetGraphic(4);
     }
 }
