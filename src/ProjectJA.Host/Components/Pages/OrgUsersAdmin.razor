@@ -2,12 +2,16 @@
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "OrgAdmin")]
 @rendermode InteractiveServer
 @using System.Security.Claims
+@using Microsoft.AspNetCore.Identity
 @using ProjectJA.Modules.Identity.Domain
 @using ProjectJA.SharedKernel.Audit
 @inject AppDbContext Db
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject UserManager<ApplicationUser> Users
 @inject AuthenticationStateProvider Auth
 @inject IAuditLog Audit
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
 
 <PageTitle>Org users</PageTitle>
 
@@ -32,6 +36,7 @@ else
                 <MudTh>Name</MudTh>
                 <MudTh>Email</MudTh>
                 <MudTh Style="width:9rem;">Org admin</MudTh>
+                <MudTh Style="width:11rem;">2FA</MudTh>
             </HeaderContent>
             <RowTemplate>
                 <MudTd>@context.DisplayName</MudTd>
@@ -41,6 +46,26 @@ else
                                Value="context.IsOrgAdmin"
                                Color="Color.Success"
                                ValueChanged="@((bool v) => SetOrgAdminAsync(context, v))" />
+                </MudTd>
+                <MudTd>
+                    @if (!context.TwoFactorEnabled)
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Default">Off</MudText>
+                    }
+                    else if (context.IsOrgAdmin)
+                    {
+                        @* Deliberately not allowed: admins should disable their
+                           own 2FA from /settings (current-password gated). *@
+                        <MudText Typo="Typo.body2" Color="Color.Default" title="Org admins must manage their own 2FA from Settings.">On</MudText>
+                    }
+                    else
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                                   StartIcon="@Icons.Material.Filled.RemoveModerator"
+                                   OnClick="@(() => DisableTwoFactorAsync(context))">
+                            Disable 2FA
+                        </MudButton>
+                    }
                 </MudTd>
             </RowTemplate>
         </MudTable>
@@ -71,7 +96,8 @@ else
                 u.Id,
                 ((u.FirstName + " " + u.LastName).Trim() != "") ? (u.FirstName + " " + u.LastName).Trim() : (u.Email ?? "(unknown)"),
                 u.Email ?? "",
-                u.IsOrgAdmin))
+                u.IsOrgAdmin,
+                u.TwoFactorEnabled))
             .ToListAsync();
     }
 
@@ -131,5 +157,53 @@ else
         catch { /* swallowed */ }
     }
 
-    private sealed record Row(Guid Id, string DisplayName, string Email, bool IsOrgAdmin);
+    private async Task DisableTwoFactorAsync(Row row)
+    {
+        _error = null;
+        _message = null;
+
+        // Belt-and-braces: refuse to act on an org admin via this path. The UI
+        // already hides the button, but a stale grid row could lag behind a
+        // promotion happening in another tab.
+        if (row.IsOrgAdmin)
+        {
+            _error = "Org admins must disable their own 2FA from Settings.";
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            "Disable two-factor authentication?",
+            $"This will turn off 2FA for {row.DisplayName} ({row.Email}) and invalidate their authenticator app and recovery codes. "
+            + "They will sign in with only their password until they re-enroll. This action is audited.",
+            yesText: "Disable 2FA",
+            cancelText: "Cancel");
+        if (confirm != true) return;
+
+        try
+        {
+            var user = await Users.FindByIdAsync(row.Id.ToString());
+            if (user is null) { _error = "User no longer exists."; return; }
+            if (!user.TwoFactorEnabled) { _message = "User already had 2FA off."; return; }
+
+            var result = await Users.SetTwoFactorEnabledAsync(user, false);
+            if (!result.Succeeded)
+            {
+                _error = string.Join(" ", result.Errors.Select(e => e.Description));
+                return;
+            }
+            // Rotate so any old authenticator pairing is dead even if it was
+            // never actually used to sign in.
+            await Users.ResetAuthenticatorKeyAsync(user);
+
+            await AuditAsync("user.two_factor.admin_disabled",
+                $"Disabled 2FA for {row.DisplayName} ({row.Email})",
+                new { targetUserId = row.Id, row.Email });
+
+            Snackbar.Add($"2FA disabled for {row.DisplayName}.", Severity.Success);
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private sealed record Row(Guid Id, string DisplayName, string Email, bool IsOrgAdmin, bool TwoFactorEnabled);
 }
