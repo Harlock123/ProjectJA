@@ -6,6 +6,7 @@
 @inject IInviteService InviteService
 @inject AuthenticationStateProvider Auth
 @inject NavigationManager Nav
+@inject IConfiguration Config
 
 <PageTitle>Invites</PageTitle>
 
@@ -100,7 +101,12 @@
             return;
         }
 
-        var baseUrl = new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority);
+        // Honour App:PublicBaseUrl so links sent from a port-forwarded host
+        // resolve to the public address instead of the LAN host.
+        var configured = Config["App:PublicBaseUrl"]?.TrimEnd('/');
+        var baseUrl = string.IsNullOrWhiteSpace(configured)
+            ? new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority)
+            : configured;
         _lastInvite = await InviteService.CreateAsync(_draft.Email, userId, baseUrl, default);
         _draft = new();
         await ReloadAsync();

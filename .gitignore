@@ -482,3 +482,7 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Per-developer config overrides (e.g. App:PublicBaseUrl for port-forwarded hosts).
+# Loaded after appsettings.{Environment}.json by Program.cs.
+appsettings.Local.json

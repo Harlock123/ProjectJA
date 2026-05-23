@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Configuration;
 using ProjectJA.Modules.Identity.Contracts;
 
 namespace ProjectJA.Modules.Identity.Endpoints;
@@ -28,6 +29,7 @@ internal static class IdentityEndpoints
         group.MapPost("/", async (
             [FromBody] CreateInviteRequest req,
             [FromServices] IInviteService invites,
+            [FromServices] IConfiguration config,
             HttpContext http,
             CancellationToken ct) =>
         {
@@ -38,7 +40,12 @@ internal static class IdentityEndpoints
             if (!Guid.TryParse(userId, out var createdById))
                 return Results.Unauthorized();
 
-            var baseUrl = $"{http.Request.Scheme}://{http.Request.Host}";
+            // Prefer App:PublicBaseUrl when set so recipients behind NAT / a
+            // reverse proxy get a reachable link instead of the LAN host header.
+            var configured = config["App:PublicBaseUrl"]?.TrimEnd('/');
+            var baseUrl = string.IsNullOrWhiteSpace(configured)
+                ? $"{http.Request.Scheme}://{http.Request.Host}"
+                : configured;
             var invite = await invites.CreateAsync(req.Email, createdById, baseUrl, ct);
             return Results.Created($"/api/invites/{invite.Id}", invite);
         });

@@ -30,6 +30,11 @@ using ProjectJA.Modules.Workflows;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Per-developer overrides (not tracked in git). Loaded last so it wins over
+// appsettings.json and appsettings.{Environment}.json. Use this for things
+// like App:PublicBaseUrl on a port-forwarded dev host.
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
 builder.Host.UseSerilog((ctx, sp, logger) =>
 {
     logger.ReadFrom.Configuration(ctx.Configuration)
