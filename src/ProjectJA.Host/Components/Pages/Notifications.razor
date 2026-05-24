@@ -1,0 +1,187 @@
+@page "/notifications"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using ProjectJA.SharedKernel.Notifications
+@inject INotificationService NotificationsService
+@inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
+
+<PageTitle>Notifications</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+    <MudText Typo="Typo.h4">Notifications</MudText>
+    <MudSpacer />
+    <MudSwitch T="bool" Value="_unreadOnly" ValueChanged="OnUnreadOnlyChangedAsync"
+               Label="Unread only" Color="Color.Primary" />
+    <MudButton OnClick="MarkAllReadAsync" Variant="Variant.Outlined" Color="Color.Primary"
+               StartIcon="@Icons.Material.Filled.DoneAll"
+               Disabled="@(_unreadCount == 0)">
+        Mark all read
+    </MudButton>
+</MudStack>
+
+<MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
+    @($"{_unreadCount} unread") · showing the @(_unreadOnly ? "unread" : "most recent")
+    @_items.Count @(_items.Count == 1 ? "item" : "items").
+</MudText>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_items.Count == 0)
+{
+    <MudPaper Class="pa-6" Elevation="1" Style="text-align:center;">
+        <MudIcon Icon="@Icons.Material.Filled.NotificationsNone" Size="Size.Large" Color="Color.Default" />
+        <MudText Typo="Typo.h6" Class="mt-2">@(_unreadOnly ? "You're all caught up." : "No notifications yet.")</MudText>
+        <MudText Typo="Typo.body2" Color="Color.Default">
+            @(_unreadOnly
+                ? "Toggle 'Unread only' off to see your read history."
+                : "Events that target you (assignments, comments, blockers, sprint changes, security events) show up here.")
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    <MudPaper Elevation="1">
+        <MudTable Items="_items" Dense="true" Hover="true" Striped="false"
+                  RowStyleFunc="RowStyle">
+            <HeaderContent>
+                <MudTh Style="width:3rem;"></MudTh>
+                <MudTh>Title</MudTh>
+                <MudTh Style="width:12rem;">When</MudTh>
+                <MudTh Style="width:6rem;">Status</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>
+                    <MudIcon Icon="@IconFor(context.Kind)" Color="@ColorFor(context.Kind)" Size="Size.Small" />
+                </MudTd>
+                <MudTd>
+                    <MudLink Style="cursor:pointer;" Color="Color.Inherit"
+                             OnClick="@(() => OpenAsync(context))">@context.Title</MudLink>
+                </MudTd>
+                <MudTd>
+                    <MudText Typo="Typo.body2" Color="Color.Default" title="@context.CreatedAt.ToString("u")">
+                        @FormatAge(context.CreatedAt)
+                    </MudText>
+                </MudTd>
+                <MudTd>
+                    @if (context.ReadAt is null)
+                    {
+                        <MudChip T="string" Color="Color.Primary" Size="Size.Small" Variant="Variant.Filled">unread</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Default" Size="Size.Small" Variant="Variant.Outlined">read</MudChip>
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudPaper>
+}
+
+@code {
+    private Guid _userId;
+    private bool _loading = true;
+    private bool _unreadOnly;
+    private int _unreadCount;
+    private IReadOnlyList<NotificationView> _items = Array.Empty<NotificationView>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        if (!Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _userId))
+            return;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            // Two awaits in series — same scoped DbContext, so no parallelism.
+            _items = await NotificationsService.ListForUserAsync(_userId, 100, _unreadOnly, default);
+            _unreadCount = await NotificationsService.GetUnreadCountAsync(_userId, default);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OnUnreadOnlyChangedAsync(bool value)
+    {
+        _unreadOnly = value;
+        await ReloadAsync();
+    }
+
+    private async Task OpenAsync(NotificationView n)
+    {
+        if (n.ReadAt is null)
+        {
+            try
+            {
+                await NotificationsService.MarkReadAsync(n.Id, _userId, default);
+                if (_unreadCount > 0) _unreadCount--;
+            }
+            catch { /* swallowed — next reload will reconcile */ }
+        }
+        if (!string.IsNullOrWhiteSpace(n.Link)) Nav.NavigateTo(n.Link);
+    }
+
+    private async Task MarkAllReadAsync()
+    {
+        try
+        {
+            await NotificationsService.MarkAllReadAsync(_userId, default);
+            Snackbar.Add("Marked all notifications read.", Severity.Success);
+        }
+        catch
+        {
+            Snackbar.Add("Couldn't mark all read — try again.", Severity.Error);
+        }
+        await ReloadAsync();
+    }
+
+    private string RowStyle(NotificationView n, int _) =>
+        n.ReadAt is null ? "background:rgba(94,53,177,0.04);" : "";
+
+    private static string IconFor(string kind) => kind switch
+    {
+        NotificationKinds.IssueAssigned       => Icons.Material.Filled.AssignmentInd,
+        NotificationKinds.IssueCommented      => Icons.Material.Filled.Comment,
+        NotificationKinds.IssueDone           => Icons.Material.Filled.CheckCircle,
+        NotificationKinds.IssueBlockerAdded   => Icons.Material.Filled.Block,
+        NotificationKinds.IssueSprintChanged  => Icons.Material.Filled.Loop,
+        NotificationKinds.SecurityPasswordChanged           => Icons.Material.Filled.Lock,
+        NotificationKinds.SecurityTwoFactorEnabled          => Icons.Material.Filled.Security,
+        NotificationKinds.SecurityTwoFactorDisabled         => Icons.Material.Filled.RemoveModerator,
+        NotificationKinds.SecurityTwoFactorAdminDisabled    => Icons.Material.Filled.RemoveModerator,
+        NotificationKinds.SecurityRecoveryCodesRegenerated  => Icons.Material.Filled.Refresh,
+        _ => Icons.Material.Filled.Notifications,
+    };
+
+    private static Color ColorFor(string kind) => kind switch
+    {
+        NotificationKinds.IssueAssigned       => Color.Primary,
+        NotificationKinds.IssueCommented      => Color.Info,
+        NotificationKinds.IssueDone           => Color.Success,
+        NotificationKinds.IssueBlockerAdded   => Color.Error,
+        NotificationKinds.IssueSprintChanged  => Color.Secondary,
+        _ when kind.StartsWith("security.")   => Color.Warning,
+        _ => Color.Default,
+    };
+
+    private static string FormatAge(DateTimeOffset at)
+    {
+        var delta = DateTimeOffset.UtcNow - at;
+        if (delta.TotalSeconds < 60) return "just now";
+        if (delta.TotalMinutes < 60) return $"{(int)delta.TotalMinutes}m ago";
+        if (delta.TotalHours < 24) return $"{(int)delta.TotalHours}h ago";
+        if (delta.TotalDays < 7) return $"{(int)delta.TotalDays}d ago";
+        return at.LocalDateTime.ToString("yyyy-MM-dd");
+    }
+}

@@ -57,6 +57,14 @@
                         </div>
                     }
                 }
+
+                @* Always-visible footer link to the full history page — read
+                   items don't show in this popover but live on for /notifications. *@
+                <div style="padding:0.5rem 0.75rem;text-align:center;border-top:1px solid rgba(0,0,0,0.08);cursor:pointer;"
+                     @onclick="ViewAllAsync">
+                    <MudText Typo="Typo.caption" Color="Color.Primary"
+                             Style="text-decoration:underline;">View all notifications</MudText>
+                </div>
             </div>
         </ChildContent>
     </MudMenu>
@@ -115,6 +123,17 @@
     {
         if (_menu is not null) await _menu.OpenMenuAsync(EventArgs.Empty);
         await LoadListAsync();
+    }
+
+    private async Task CloseMenu()
+    {
+        if (_menu is not null) await _menu.CloseMenuAsync();
+    }
+
+    private async Task ViewAllAsync()
+    {
+        await CloseMenu();
+        Nav.NavigateTo("/notifications");
     }
 
     private async Task LoadListAsync()
