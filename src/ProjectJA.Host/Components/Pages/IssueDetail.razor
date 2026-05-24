@@ -538,10 +538,7 @@ else
     {
         _linkError = null;
         if (!_canWrite || _addBlockerSelection is not { } blockerId) return;
-        var outcome = await IssueLinks.AddBlockerAsync(IssueId, blockerId, Guid.Empty, default);
-        // Guid.Empty is fine here for actingUserId — the service only stores
-        // it for audit, and we currently don't expose user identity to the
-        // page-level link service caller. (Refactor if/when audit needs it.)
+        var outcome = await IssueLinks.AddBlockerAsync(IssueId, blockerId, _currentUserId, default);
         _linkError = outcome switch
         {
             AddBlockerOutcome.Added => null,
@@ -554,6 +551,8 @@ else
         };
         if (_linkError is null)
         {
+            try { await Notifications.OnBlockerAddedAsync(IssueId, blockerId, _currentUserId, default); }
+            catch { /* best-effort */ }
             await ReloadAsync();
             Snackbar.Add("Blocker added.", Severity.Success);
         }

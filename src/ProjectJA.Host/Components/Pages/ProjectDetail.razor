@@ -354,6 +354,15 @@ else
         var tracked = await Db.Issues.FirstAsync(i => i.Id == issue.Id);
         tracked.Transition(newStateId, Clock.UtcNow);
         await Db.SaveChangesAsync();
+
+        try
+        {
+            var doneCategory = _workflow.States.FirstOrDefault(s => s.Id == newStateId)?.Category
+                               == WorkflowStateCategory.Done;
+            await Notifications.OnIssueTransitionedAsync(tracked.Id, doneCategory, _currentUserId, default);
+        }
+        catch { /* best-effort */ }
+
         await ReloadAsync();
     }
 

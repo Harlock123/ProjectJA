@@ -21,6 +21,7 @@
 @inject AuthenticationStateProvider Auth
 @inject IProjectQueries Projects
 @inject ISprintQueries SprintsQueries
+@inject ProjectJA.SharedKernel.Notifications.INotificationService Notifications
 @inject IUserQueries Users
 @inject IWorkflowQueries WorkflowsQueries
 @inject ISnackbar Snackbar
@@ -136,6 +137,7 @@ else
     private IReadOnlyList<SprintSummary> _sprints = Array.Empty<SprintSummary>();
     private Dictionary<Guid, string> _sprintNames = new();
     private Dictionary<Guid, UserSummary> _userById = new();
+    private Guid _currentUserId;
     // Filter value conventions: "all" | "backlog" | "<sprint-guid>".
     private string _filter = "all";
     private IDisposable? _subscription;
@@ -145,8 +147,8 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await Auth.GetAuthenticationStateAsync();
-        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId);
-        var role = await Projects.GetRoleAsync(ProjectId, userId, default);
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _currentUserId);
+        var role = await Projects.GetRoleAsync(ProjectId, _currentUserId, default);
         if (role is null)
         {
             Nav.NavigateTo("/projects?denied=1");
@@ -276,6 +278,14 @@ else
 
         issue.Transition(sid, Clock.UtcNow);
         await Db.SaveChangesAsync();
+
+        try
+        {
+            var doneCategory = _workflow?.States.FirstOrDefault(s => s.Id == sid)?.Category
+                               == WorkflowStateCategory.Done;
+            await Notifications.OnIssueTransitionedAsync(issue.Id, doneCategory, _currentUserId, default);
+        }
+        catch { /* best-effort */ }
 
         if (_groupName is not null)
         {

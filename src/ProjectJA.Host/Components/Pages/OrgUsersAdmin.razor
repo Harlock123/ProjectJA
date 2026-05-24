@@ -12,6 +12,7 @@
 @inject IAuditLog Audit
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
+@inject ProjectJA.SharedKernel.Notifications.INotificationService Notifications
 
 <PageTitle>Org users</PageTitle>
 
@@ -200,6 +201,8 @@ else
                 new { targetUserId = row.Id, row.Email });
 
             Snackbar.Add($"2FA disabled for {row.DisplayName}.", Severity.Success);
+            try { await Notifications.OnTwoFactorDisabledAsync(row.Id, _currentUserId, default); }
+            catch { /* best-effort */ }
             await ReloadAsync();
         }
         catch (Exception ex) { _error = ex.Message; }

@@ -255,6 +255,7 @@ internal static class IssuesEndpoints
             [FromBody] TransitionRequest req,
             [FromServices] DbContext db,
             [FromServices] IAuditLog audit,
+            [FromServices] INotificationService notifications,
             [FromServices] IClock clock,
             [FromServices] IRealtimeNotifier realtime,
             [FromServices] ITenantContext tenant,
@@ -298,6 +299,13 @@ internal static class IssuesEndpoints
                 Summary: $"Issue moved {oldState?.Name ?? "?"} → {target.Name}",
                 Detail: new { fromStateId = oldStateId, from = oldState?.Name, toStateId = target.Id, to = target.Name }), ct);
 
+            try
+            {
+                await notifications.OnIssueTransitionedAsync(
+                    issue.Id, target.Category == WorkflowStateCategory.Done, auth.UserId, ct);
+            }
+            catch { /* best-effort */ }
+
             var groupName = $"tenant:{tenant.Current.Value:N}:project:{issue.ProjectId:N}";
             await realtime.PublishAsync(
                 groupName,
@@ -328,6 +336,7 @@ internal static class IssuesEndpoints
             [FromServices] IProjectQueries projects,
             [FromServices] ISprintQueries sprintQueries,
             [FromServices] IAuditLog audit,
+            [FromServices] INotificationService notifications,
             [FromServices] IClock clock,
             HttpContext http,
             CancellationToken ct) =>
@@ -360,6 +369,9 @@ internal static class IssuesEndpoints
                     ? $"Moved issue back to backlog (was sprint {previous})"
                     : $"Moved issue to sprint {req.SprintId} (was {(previous?.ToString() ?? "backlog")})",
                 Detail: new { issueId = issue.Id, projectId = issue.ProjectId, previousSprintId = previous, newSprintId = req.SprintId }), ct);
+
+            try { await notifications.OnIssueSprintChangedAsync(issue.Id, previous, req.SprintId, auth.UserId, ct); }
+            catch { /* best-effort */ }
 
             return Results.NoContent();
         })
@@ -462,6 +474,7 @@ internal static class IssuesEndpoints
             [FromServices] DbContext db,
             [FromServices] IProjectQueries projects,
             [FromServices] IIssueLinkService links,
+            [FromServices] INotificationService notifications,
             HttpContext http,
             CancellationToken ct) =>
         {
@@ -471,6 +484,11 @@ internal static class IssuesEndpoints
             if (auth.Denied) return auth.Failure!;
 
             var outcome = await links.AddBlockerAsync(id, req.BlockerIssueId, auth.UserId, ct);
+            if (outcome == AddBlockerOutcome.Added)
+            {
+                try { await notifications.OnBlockerAddedAsync(id, req.BlockerIssueId, auth.UserId, ct); }
+                catch { /* best-effort */ }
+            }
             return outcome switch
             {
                 AddBlockerOutcome.Added => Results.Created($"/api/issues/{id}/links", new { }),

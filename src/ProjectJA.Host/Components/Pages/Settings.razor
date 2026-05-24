@@ -17,6 +17,7 @@
 @inject UserManager<ApplicationUser> Users
 @inject AuthenticationStateProvider Auth
 @inject ISnackbar Snackbar
+@inject ProjectJA.SharedKernel.Notifications.INotificationService Notifications
 
 <PageTitle>Settings</PageTitle>
 
@@ -423,6 +424,8 @@
             _passwordSuccess = "Password changed.";
             _currentPassword = _newPassword = _confirmPassword = "";
             Snackbar.Add("Password changed.", Severity.Success);
+            try { await Notifications.OnPasswordChangedAsync(_userId, default); }
+            catch { /* best-effort */ }
         }
         finally
         {
@@ -497,6 +500,8 @@
             _recoveryCodes = codes?.ToArray() ?? Array.Empty<string>();
             _twoFactor = TwoFactorUiState.ShowingRecoveryCodes;
             Snackbar.Add("Two-factor authentication enabled.", Severity.Success);
+            try { await Notifications.OnTwoFactorEnabledAsync(_userId, default); }
+            catch { /* best-effort */ }
         }
         finally
         {
@@ -556,6 +561,8 @@
             _actionPassword = "";
             _twoFactor = TwoFactorUiState.NotEnrolled;
             Snackbar.Add("Two-factor authentication disabled.", Severity.Success);
+            try { await Notifications.OnTwoFactorDisabledAsync(_userId, adminActorId: null, default); }
+            catch { /* best-effort */ }
         }
         finally
         {
@@ -583,6 +590,8 @@
             _actionPassword = "";
             _twoFactor = TwoFactorUiState.ShowingRecoveryCodes;
             Snackbar.Add("New recovery codes generated.", Severity.Success);
+            try { await Notifications.OnRecoveryCodesRegeneratedAsync(_userId, default); }
+            catch { /* best-effort */ }
         }
         finally
         {

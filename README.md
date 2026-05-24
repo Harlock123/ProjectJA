@@ -127,6 +127,39 @@ First vertical slice in progress. The stack is proven end-to-end for the on-prem
 - **Public base URL override.** Outbound links — invite emails, password-reset emails, copy-to-clipboard invite UI — default to `Request.Scheme://Request.Host`, which is the LAN host header when the app sits behind a port-forward / reverse proxy / NAT. Set `App:PublicBaseUrl` (env: `App__PublicBaseUrl`) to override. For per-developer values an optional `appsettings.Local.json` is loaded after the standard config sources; the file is gitignored so it can hold dev-only overrides (like your personal port-forwarded hostname) without leaking into the repo.
 - **Unauthenticated-circuit tenant resolution.** `TenantCircuitHandler` originally set the tenant only from the auth cookie's `tenant_id` claim — fine post-signin but broken on `/login` and other pre-auth pages, which crashed any tenant-bound service (e.g. `IOidcConfigService` resolving `DbContext`) the moment the Blazor circuit opened. The handler now falls back to `directory.GetDefaultAsync()` in on-prem mode and host-slug lookup in SaaS mode when no claim is present, mirroring the HTTP `TenantResolutionMiddleware`. A regression test (`TenantCircuitHandlerTests`) exercises the fallback path.
 
+### Notifications
+
+In-app inbox accessible from the bell icon in the top-right app bar. Per-tenant `notifications` table (`RecipientUserId`, `ActorId?`, `Kind`, `Title`, `Link`, `ResourceId?`, `CreatedAt`, `ReadAt?`), indexed on `(RecipientUserId, CreatedAt desc)` and `(RecipientUserId, ReadAt)` for the two hot queries (inbox + unread-count). The cross-module facade `INotificationService` lives in `SharedKernel/Notifications` — same pattern as `IAuditLog`, `IEmailSender`, `IRealtimeNotifier` — so any module can raise a notification without a circular dependency back into `Modules.Notifications`. The implementation lives in `Modules.Notifications.Application.NotificationService`.
+
+**Events that produce notifications today**
+
+| Event kind | Trigger | Recipient(s) | Link |
+| --- | --- | --- | --- |
+| `issue.assigned` | An issue's assignee changes to a non-null new user | The new assignee, unless they're the actor | `/issues/{id}` |
+| `issue.commented` | A comment is added to an issue | The issue's assignee + reporter, minus the comment author (HashSet-deduped if same user) | `/issues/{id}` |
+| `issue.done` | An issue transitions into a Done-category workflow state | The reporter + assignee, minus the actor | `/issues/{id}` |
+| `issue.blocker_added` | A blocker is added to an issue | The assignee of the *blocked* issue, unless they're the actor | `/issues/{blocked-id}` |
+| `issue.sprint_changed` | An issue is moved into / between / out of a sprint | The assignee, unless they're the actor (title varies: "moved into sprint X" / "moved to sprint Y" / "returned to backlog") | `/issues/{id}` |
+| `security.password_changed` | A user changes their own password | The user themselves | `/settings` |
+| `security.two_factor_enabled` | A user finishes 2FA enrollment | The user themselves | `/settings` |
+| `security.two_factor_disabled` | A user disables their own 2FA from Settings | The user themselves | `/settings` |
+| `security.two_factor_admin_disabled` | An OrgAdmin disables 2FA on another user via `/admin/users` | The *target* user (the real account owner sees it on next sign-in) | `/settings` |
+| `security.recovery_codes_regenerated` | A user mints fresh 2FA recovery codes | The user themselves | `/settings` |
+
+**Recipient rules.** For events where the actor "did" something to other people (assignment, comment, blocker, transition, sprint), the actor is filtered out — no self-notifications. For *security* events the user IS deliberately notified about their own action: the paper trail is the point. If a hijacked session silently changes your password or disables your 2FA, the next legitimate sign-in shows that notification. Multi-recipient events (commented, transitioned) de-dupe via `HashSet<Guid>` so an assignee-who-is-also-the-reporter only gets one row.
+
+**Trigger sites.** Every domain mutation that raises a notification wraps the call in a best-effort `try { … } catch { /* swallowed */ }` so a notification failure can never roll back the user-visible operation.
+- **REST endpoints**: `POST /api/projects/{id}/issues` (assignment on create), `PUT /api/issues/{id}` (assignment on edit), `PATCH /api/issues/{id}/status` (transition + auto-done), `PATCH /api/issues/{id}/sprint`, `POST /api/issues/{id}/blockers`, `POST /api/issues/{id}/comments`.
+- **Blazor**: `IssueEditDialog` (assignment, transition, sprint, blocker-add, comment), `IssueDetail.razor` (assignment via SaveAsync, blocker-add, comment), `ProjectDetail.razor` (new-issue assignment + status-dropdown transition), `Board.razor` (drag-drop transition), `Settings.razor` (all four security events), `OrgUsersAdmin.razor` (admin 2FA disable).
+
+**REST surface.** `GET /api/notifications` (last 20 newest-first), `GET /api/notifications/unread-count`, `POST /api/notifications/{id}/read`, `POST /api/notifications/read-all`. All `RequireAuthorization()` and scoped to the calling user — `MarkReadAsync` joins on `RecipientUserId == actingUserId`, so a user can only ever mark their own notifications read.
+
+**Bell UI** (`Components/Shared/NotificationBell.razor`) sits in the app-bar between the search box and the user-avatar menu. `MudBadge` over a `Notifications` icon shows the unread count (capped at 99+). Click → `MudMenu` popover lists the last 20 notifications newest-first; unread rows render with a light-purple highlight + bold title. Clicking a row optimistically marks it read in local state (badge decrements instantly, row de-emphasises) *before* the API round-trip, then navigates to the notification's `Link`. "Mark all read" zeroes the badge and dims every visible row optimistically; failed reconciliation falls back to the next poll.
+
+**Refresh cadence.** The bell polls `/api/notifications/unread-count` every 30 seconds while the circuit is alive. Opening the popover re-fetches the list + count in parallel so the badge can't lag the visible list. Realtime push (via `IRealtimeNotifier` to per-user SignalR groups, e.g. `tenant:{tid:N}:user:{uid:N}`) is the natural next step — the existing `BoardEventStream` + Redis backplane already support that pattern; the bell would subscribe in `OnInitializedAsync` and increment locally as events arrive.
+
+**Deferred event sources** (good candidates for future slices, in rough value order): sprint started (fan-out to every assignee with an issue in the sprint), `@username` mentions in comments (needs mention-parser + autocomplete UX), invite accepted (notify the inviter), email digest of the day's notifications, attachment added on an issue you're assigned to.
+
 ### Deferred to follow-up slices
 All commitments from `ProjectJAbeginning.md` are landed; integration tests, OpenAPI/Scalar, observability, and CI/CD have their own dedicated sections farther down. Actual outstanding items:
 - **Sprint reports — small polish.** Surface `sprint.completed` audit `Detail.issuesReturnedToBacklog` on the Completed-sprint inline report so the carry-over count is visible without going to the audit log.

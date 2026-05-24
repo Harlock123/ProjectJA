@@ -535,6 +535,8 @@
             }
 
             var previousAssigneeId = tracked.AssigneeId;
+            var previousWorkflowStateId = tracked.WorkflowStateId;
+            var previousSprintId = tracked.SprintId;
             tracked.Edit(_edit.Title, _edit.Description, Clock.UtcNow);
             tracked.Reclassify(_edit.Type, _edit.Points, _edit.AcceptanceCriteria, Clock.UtcNow);
             tracked.SetPriority(_edit.Priority, Clock.UtcNow);
@@ -585,7 +587,7 @@
             }
             await db.SaveChangesAsync();
 
-            // Best-effort notification — failure here must not roll back the
+            // Best-effort notifications — failures here must not roll back the
             // user-visible save. Uses the circuit's scoped DbContext (not the
             // short-lived factory one used above) which is fine because the
             // service does its own SaveChangesAsync on a fresh row insert.
@@ -593,6 +595,20 @@
             {
                 await Notifications.OnIssueAssignedAsync(
                     tracked.Id, previousAssigneeId, tracked.AssigneeId, _currentUserId, default);
+
+                if (tracked.WorkflowStateId != previousWorkflowStateId)
+                {
+                    var doneCategory = _workflow?.States.FirstOrDefault(s => s.Id == tracked.WorkflowStateId)?.Category
+                                       == WorkflowStateCategory.Done;
+                    await Notifications.OnIssueTransitionedAsync(
+                        tracked.Id, doneCategory, _currentUserId, default);
+                }
+
+                if (tracked.SprintId != previousSprintId)
+                {
+                    await Notifications.OnIssueSprintChangedAsync(
+                        tracked.Id, previousSprintId, tracked.SprintId, _currentUserId, default);
+                }
             }
             catch { /* swallowed */ }
         }
@@ -855,6 +871,8 @@
         if (_linkError is null)
         {
             _changed = true;
+            try { await Notifications.OnBlockerAddedAsync(IssueId, blockerId, _currentUserId, default); }
+            catch { /* best-effort */ }
             await ReloadLinksCoreAsync();
         }
     }
