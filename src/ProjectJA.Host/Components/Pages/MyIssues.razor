@@ -1,0 +1,333 @@
+@page "/my-issues"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using ProjectJA.Modules.Identity.Contracts
+@using ProjectJA.Modules.Projects.Contracts
+@using ProjectJA.Modules.Workflows.Contracts
+@using ProjectJA.Modules.Workflows.Domain
+@using ProjectJA.SharedKernel.Notifications
+@inject AppDbContext Db
+@inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
+@inject IProjectQueries Projects
+@inject IUserQueries UsersQueries
+@inject IWorkflowQueries WorkflowsQueries
+
+<PageTitle>My issues</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+    <MudText Typo="Typo.h4">My issues</MudText>
+    <MudSpacer />
+    @* Three-way relation toggle: Assigned (default) / Reported / Either.
+       MudButtonGroup gives radio-like UX without the radio chrome. *@
+    <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
+        @foreach (var opt in Enum.GetValues<Relation>())
+        {
+            var selected = _relation == opt;
+            <MudButton OnClick="@(() => SetRelationAsync(opt))"
+                       Variant="@(selected ? Variant.Filled : Variant.Outlined)">
+                @RelationLabel(opt)
+            </MudButton>
+        }
+    </MudButtonGroup>
+    <MudSwitch T="bool" Value="_openOnly" ValueChanged="OnOpenOnlyChangedAsync"
+               Label="Open only" Color="Color.Primary" />
+    <MudSwitch T="bool" Value="_groupByProject" ValueChanged="OnGroupByChangedAsync"
+               Label="Group by project" Color="Color.Primary" />
+</MudStack>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_issues.Count == 0)
+{
+    <MudPaper Class="pa-6" Elevation="1" Style="text-align:center;">
+        <MudIcon Icon="@Icons.Material.Filled.Inbox" Size="Size.Large" Color="Color.Default" />
+        <MudText Typo="Typo.h6" Class="mt-2">Nothing here.</MudText>
+        <MudText Typo="Typo.body2" Color="Color.Default">
+            No issues match the current filter. Toggle the relation or turn off "Open only"
+            to see closed work.
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    <MudPaper Elevation="1">
+        <MudTable Items="_issues" Dense="true" Hover="true" Striped="false"
+                  Class="my-issues-table" GroupBy="@_groupBy">
+            <GroupHeaderTemplate>
+                <MudTh colspan="7" Style="background:rgba(94,53,177,0.05);font-weight:600;">
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                        <MudIcon Icon="@Icons.Material.Filled.Folder" Size="Size.Small" Color="Color.Primary" />
+                        <MudText Typo="Typo.body1" Style="font-family:monospace;">@context.Key</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Default">
+                            (@context.Items.Count() @(context.Items.Count() == 1 ? "issue" : "issues"))
+                        </MudText>
+                    </MudStack>
+                </MudTh>
+            </GroupHeaderTemplate>
+            <HeaderContent>
+                <MudTh Style="width:7rem;">Key</MudTh>
+                <MudTh>Title</MudTh>
+                <MudTh Style="width:8rem;">Status</MudTh>
+                <MudTh Style="width:7rem;">Priority</MudTh>
+                <MudTh Style="width:11rem;">Assignee</MudTh>
+                <MudTh Style="width:9rem;">Sprint</MudTh>
+                <MudTh Style="width:8rem;">Updated</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>
+                    <MudLink Href="@($"/issues/{context.Id}")" Style="font-family:monospace;font-size:0.85rem;">
+                        @($"{ProjectKey(context.ProjectId)}-{context.Number}")
+                    </MudLink>
+                </MudTd>
+                <MudTd>
+                    <MudLink Href="@($"/issues/{context.Id}")" Color="Color.Inherit">@context.Title</MudLink>
+                </MudTd>
+                <MudTd>
+                    @{
+                        var state = StateFor(context.WorkflowStateId);
+                    }
+                    <MudChip T="string" Size="Size.Small" Color="@CategoryColor(state?.Category)">
+                        @(state?.Name ?? "?")
+                    </MudChip>
+                </MudTd>
+                <MudTd>
+                    <MudChip T="string" Size="Size.Small" Color="@PriorityColor(context.Priority)"
+                             Variant="@(context.Priority == IssuePriority.None ? Variant.Outlined : Variant.Filled)">
+                        @context.Priority
+                    </MudChip>
+                </MudTd>
+                <MudTd>
+                    @if (context.AssigneeId is { } aid && _userById.TryGetValue(aid, out var au))
+                    {
+                        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                            <UserAvatar AvatarKey="@au.AvatarKey" DisplayName="@au.DisplayName" Size="Size.Small" />
+                            <MudText Typo="Typo.body2" Style="overflow:hidden;text-overflow:ellipsis;">@au.DisplayName</MudText>
+                        </MudStack>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Default">unassigned</MudText>
+                    }
+                </MudTd>
+                <MudTd>
+                    @if (context.SprintId is { } sid && _sprintNames.TryGetValue(sid, out var sname))
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Secondary"
+                                 Icon="@Icons.Material.Filled.Loop">@sname</MudChip>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Default">backlog</MudText>
+                    }
+                </MudTd>
+                <MudTd>
+                    <MudText Typo="Typo.body2" Color="Color.Default" title="@context.UpdatedAt.ToString("u")">
+                        @FormatAge(context.UpdatedAt)
+                    </MudText>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudPaper>
+    <MudText Typo="Typo.caption" Color="Color.Default" Class="mt-2">
+        Showing @_issues.Count @(_issues.Count == 1 ? "issue" : "issues") (most-recently-updated first, capped at 200).
+    </MudText>
+}
+
+@code {
+    private enum Relation { Assigned, Reported, Either, Mentioned }
+
+    private Guid _userId;
+    private bool _loading = true;
+    private Relation _relation = Relation.Assigned;
+    private bool _openOnly = true;
+    private bool _groupByProject;
+
+    private List<Issue> _issues = new();
+    private Dictionary<Guid, string> _projectKeyById = new();
+    private Dictionary<Guid, WorkflowState> _stateById = new();
+    private Dictionary<Guid, UserSummary> _userById = new();
+    private Dictionary<Guid, string> _sprintNames = new();
+    // Set when _groupByProject toggles on; MudTable picks it up to render
+    // group header rows. Null = flat list.
+    private TableGroupDefinition<Issue>? _groupBy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        if (!Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _userId))
+            return;
+        await ReloadAsync();
+    }
+
+    private async Task SetRelationAsync(Relation r)
+    {
+        if (_relation == r) return;
+        _relation = r;
+        await ReloadAsync();
+    }
+
+    private async Task OnOpenOnlyChangedAsync(bool value)
+    {
+        _openOnly = value;
+        await ReloadAsync();
+    }
+
+    private Task OnGroupByChangedAsync(bool value)
+    {
+        _groupByProject = value;
+        _groupBy = value
+            ? new TableGroupDefinition<Issue>
+            {
+                Selector = i => ProjectKey(i.ProjectId),
+                Indentation = false,
+                Expandable = false,
+                IsInitiallyExpanded = true,
+            }
+            : null;
+        // No reload — same rows, just regrouped.
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            // Scope to projects the user can see at all — same gate the
+            // /api/projects list + /api/issues/search post-filter use.
+            var memberProjectIds = (await Projects.ListMemberProjectIdsAsync(_userId, default)).ToList();
+            if (memberProjectIds.Count == 0)
+            {
+                _issues = new();
+                return;
+            }
+
+            // For the "Mentioned" filter we need the signed-in user's email
+            // prefix to look for comment bodies containing @<that-prefix>.
+            string? myMentionPrefix = null;
+            if (_relation == Relation.Mentioned)
+            {
+                var me = await UsersQueries.GetByIdAsync(_userId, default);
+                var email = me?.Email;
+                if (string.IsNullOrWhiteSpace(email)) { _issues = new(); return; }
+                var at = email.IndexOf('@');
+                myMentionPrefix = (at <= 0 ? email : email[..at]).ToLowerInvariant();
+            }
+
+            var q = Db.Issues.AsNoTracking()
+                .Where(i => memberProjectIds.Contains(i.ProjectId));
+            q = _relation switch
+            {
+                Relation.Assigned => q.Where(i => i.AssigneeId == _userId),
+                Relation.Reported => q.Where(i => i.ReporterId == _userId),
+                Relation.Either   => q.Where(i => i.AssigneeId == _userId || i.ReporterId == _userId),
+                // Rough ILIKE filter in SQL — fast indexable substring match.
+                // Refined client-side below with the regex-based ContainsMention
+                // so '@alice' doesn't false-match '@alice123'.
+                Relation.Mentioned => q.Where(i => i.Comments.Any(c =>
+                    EF.Functions.ILike(c.Body, "%@" + myMentionPrefix + "%"))),
+                _ => q,
+            };
+
+            // Cap at 200 — large enough to be useful, small enough to keep the
+            // table snappy without pagination. Add paging if real-world use
+            // routinely exceeds this.
+            var query = q.OrderByDescending(i => i.UpdatedAt).Take(200);
+            // For Mentioned we also need the comment bodies to refine the
+            // ILIKE-coarse SQL match with the proper word-boundary regex.
+            if (_relation == Relation.Mentioned) query = query.Include(i => i.Comments);
+            var rows = await query.ToListAsync();
+
+            if (_relation == Relation.Mentioned)
+            {
+                rows = rows.Where(i =>
+                    i.Comments.Any(c => MentionTokens.ContainsMention(c.Body, myMentionPrefix))).ToList();
+            }
+
+            // Side-load project keys, workflow states, users, sprint names for
+            // display. All scoped to the projects whose issues we surfaced.
+            var projectIds = rows.Select(i => i.ProjectId).Distinct().ToList();
+            _projectKeyById = await Db.Projects.AsNoTracking()
+                .Where(p => projectIds.Contains(p.Id))
+                .Select(p => new { p.Id, p.Key })
+                .ToDictionaryAsync(p => p.Id, p => p.Key);
+
+            // Workflow states keyed by stateId so we can look up name + category
+            // per issue without re-fetching per-row.
+            _stateById = await Db.Workflows.AsNoTracking()
+                .Where(w => projectIds.Contains(w.ProjectId))
+                .SelectMany(w => w.States)
+                .ToDictionaryAsync(s => s.Id);
+
+            // Sprint names for the chip — only the IDs actually in use.
+            var sprintIds = rows.Where(i => i.SprintId.HasValue).Select(i => i.SprintId!.Value).Distinct().ToList();
+            _sprintNames = sprintIds.Count == 0
+                ? new()
+                : await Db.Sprints.AsNoTracking()
+                    .Where(s => sprintIds.Contains(s.Id))
+                    .ToDictionaryAsync(s => s.Id, s => s.Name);
+
+            var users = await UsersQueries.ListAllAsync(default);
+            _userById = users.ToDictionary(u => u.Id);
+
+            if (_openOnly)
+            {
+                rows = rows.Where(i =>
+                    !_stateById.TryGetValue(i.WorkflowStateId, out var s)
+                    || s.Category != WorkflowStateCategory.Done).ToList();
+            }
+            _issues = rows;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private string ProjectKey(Guid projectId) =>
+        _projectKeyById.TryGetValue(projectId, out var k) ? k : "?";
+
+    private WorkflowState? StateFor(Guid stateId) =>
+        _stateById.TryGetValue(stateId, out var s) ? s : null;
+
+    private static string RelationLabel(Relation r) => r switch
+    {
+        Relation.Assigned => "Assigned to me",
+        Relation.Reported => "Reported by me",
+        Relation.Either   => "Either",
+        Relation.Mentioned => "Mentioned",
+        _ => r.ToString(),
+    };
+
+    private static Color CategoryColor(WorkflowStateCategory? c) => c switch
+    {
+        WorkflowStateCategory.Open => Color.Default,
+        WorkflowStateCategory.InProgress => Color.Warning,
+        WorkflowStateCategory.Done => Color.Success,
+        _ => Color.Default,
+    };
+
+    private static Color PriorityColor(IssuePriority p) => p switch
+    {
+        IssuePriority.Critical => Color.Error,
+        IssuePriority.High => Color.Warning,
+        IssuePriority.Medium => Color.Info,
+        IssuePriority.Low => Color.Default,
+        _ => Color.Default,
+    };
+
+    private static string FormatAge(DateTimeOffset at)
+    {
+        var delta = DateTimeOffset.UtcNow - at;
+        if (delta.TotalSeconds < 60) return "just now";
+        if (delta.TotalMinutes < 60) return $"{(int)delta.TotalMinutes}m ago";
+        if (delta.TotalHours < 24) return $"{(int)delta.TotalHours}h ago";
+        if (delta.TotalDays < 7) return $"{(int)delta.TotalDays}d ago";
+        return at.LocalDateTime.ToString("yyyy-MM-dd");
+    }
+}

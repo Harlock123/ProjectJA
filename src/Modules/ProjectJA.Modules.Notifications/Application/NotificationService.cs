@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: BUSL-1.1
-using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using ProjectJA.Modules.Identity.Domain;
 using ProjectJA.Modules.Issues.Domain;
@@ -132,24 +131,16 @@ internal sealed class NotificationService(DbContext db, IClock clock) : INotific
             await db.SaveChangesAsync(ct);
     }
 
-    // Matches @<token> where token is letters/digits/dots/underscores/dashes.
-    // Deliberately conservative — emojis, accented characters and trailing
-    // punctuation don't make it into the captured group.
-    private static readonly Regex MentionPattern = new(@"@([A-Za-z0-9._-]+)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    /// <summary>Extract @tokens from <paramref name="body"/> and resolve each
-    /// against the tenant's users by email-prefix (the part before the @ in
-    /// the user's Email). First match wins on collision; unknown tokens are
-    /// silently dropped. Returns the set of resolved user IDs (deduped).</summary>
+    /// <summary>Extract @tokens from <paramref name="body"/> (via the shared
+    /// <see cref="MentionTokens"/> helper so the parser definition lives in
+    /// exactly one place) and resolve each against the tenant's users by
+    /// email-prefix (the part before the @ in the user's Email). First match
+    /// wins on collision; unknown tokens are silently dropped. Returns the
+    /// set of resolved user IDs (deduped).</summary>
     private async Task<HashSet<Guid>> ResolveMentionsAsync(string? body, CancellationToken ct)
     {
         var result = new HashSet<Guid>();
-        if (string.IsNullOrWhiteSpace(body)) return result;
-        var tokens = MentionPattern.Matches(body)
-            .Select(m => m.Groups[1].Value.ToLowerInvariant())
-            .Distinct()
-            .ToList();
+        var tokens = MentionTokens.Extract(body).ToList();
         if (tokens.Count == 0) return result;
 
         // Tenant user counts are small in practice (B2B SaaS), so loading the
