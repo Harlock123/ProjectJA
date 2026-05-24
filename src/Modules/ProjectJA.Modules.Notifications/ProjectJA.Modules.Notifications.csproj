@@ -2,6 +2,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\ProjectJA.SharedKernel\ProjectJA.SharedKernel.csproj" />
+    <ProjectReference Include="..\ProjectJA.Modules.Identity\ProjectJA.Modules.Identity.csproj" />
+    <ProjectReference Include="..\ProjectJA.Modules.Projects\ProjectJA.Modules.Projects.csproj" />
+    <ProjectReference Include="..\ProjectJA.Modules.Issues\ProjectJA.Modules.Issues.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.8" />
   </ItemGroup>
 
   <PropertyGroup>

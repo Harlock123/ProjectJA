@@ -11,6 +11,7 @@ using ProjectJA.Modules.Projects.Domain;
 using ProjectJA.Modules.Workflows.Contracts;
 using ProjectJA.Modules.Workflows.Domain;
 using ProjectJA.SharedKernel.Audit;
+using ProjectJA.SharedKernel.Notifications;
 using ProjectJA.SharedKernel.Realtime;
 using ProjectJA.SharedKernel.Tenancy;
 using ProjectJA.SharedKernel.Time;
@@ -108,6 +109,7 @@ internal static class IssuesEndpoints
             [FromServices] IProjectQueries projects,
             [FromServices] IWorkflowQueries workflows,
             [FromServices] IAuditLog audit,
+            [FromServices] INotificationService notifications,
             [FromServices] IClock clock,
             HttpContext http,
             CancellationToken ct) =>
@@ -152,6 +154,12 @@ internal static class IssuesEndpoints
                 ResourceId: issue.Id.ToString(),
                 Summary: $"{project.Key}-{issue.Number} created: {issue.Title}",
                 Detail: new { project.Key, issue.Number, issue.Title }), ct);
+
+            if (req.AssigneeId is not null)
+            {
+                try { await notifications.OnIssueAssignedAsync(issue.Id, null, req.AssigneeId, createdBy, ct); }
+                catch { /* best-effort */ }
+            }
 
             return Results.Created($"/api/issues/{issue.Id}", new IssueDto(
                 issue.Id, issue.ProjectId, project.Key, issue.Number, issue.Title, issue.Description,
@@ -209,6 +217,7 @@ internal static class IssuesEndpoints
             [FromBody] EditIssueRequest req,
             [FromServices] DbContext db,
             [FromServices] IProjectQueries projects,
+            [FromServices] INotificationService notifications,
             [FromServices] IClock clock,
             HttpContext http,
             CancellationToken ct) =>
@@ -217,6 +226,7 @@ internal static class IssuesEndpoints
             if (issue is null) return Results.NotFound();
             var auth = await ProjectAccess.RequireAsync(http, projects, issue.ProjectId, ProjectRole.Member, ct);
             if (auth.Denied) return auth.Failure!;
+            var previousAssigneeId = issue.AssigneeId;
             issue.Edit(req.Title, req.Description, clock.UtcNow);
             issue.Reclassify(req.Type, req.Points, req.AcceptanceCriteria, clock.UtcNow);
             issue.SetPriority(req.Priority, clock.UtcNow);
@@ -225,6 +235,10 @@ internal static class IssuesEndpoints
             if (req.ReporterId != Guid.Empty)
                 issue.SetReporter(req.ReporterId, clock.UtcNow);
             await db.SaveChangesAsync(ct);
+
+            try { await notifications.OnIssueAssignedAsync(issue.Id, previousAssigneeId, issue.AssigneeId, auth.UserId, ct); }
+            catch { /* best-effort */ }
+
             return Results.NoContent();
         })
         .RequireAuthorization()
@@ -510,6 +524,7 @@ internal static class IssuesEndpoints
             [FromBody] AddCommentRequest req,
             [FromServices] DbContext db,
             [FromServices] IProjectQueries projects,
+            [FromServices] INotificationService notifications,
             [FromServices] IClock clock,
             HttpContext http,
             CancellationToken ct) =>
@@ -528,6 +543,9 @@ internal static class IssuesEndpoints
             // Force the new owned child to Added.
             db.Entry(comment).State = EntityState.Added;
             await db.SaveChangesAsync(ct);
+
+            try { await notifications.OnCommentAddedAsync(issue.Id, req.AuthorId, ct); }
+            catch { /* best-effort */ }
             return Results.Created($"/api/issues/{id}/comments/{comment.Id}", new { comment.Id });
         })
         .RequireAuthorization()

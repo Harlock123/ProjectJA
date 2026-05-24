@@ -17,6 +17,7 @@
 @inject ISprintQueries SprintsQueries
 @inject IWorkflowQueries WorkflowsQueries
 @inject IDialogService DialogService
+@inject ProjectJA.SharedKernel.Notifications.INotificationService Notifications
 
 <PageTitle>@(_project?.Name ?? "Project")</PageTitle>
 
@@ -319,6 +320,18 @@ else
             issue.AssignToSprint(_draft.SprintId, Clock.UtcNow);
         Db.Issues.Add(issue);
         await Db.SaveChangesAsync();
+
+        if (_draft.AssigneeId is not null)
+        {
+            try
+            {
+                await Notifications.OnIssueAssignedAsync(
+                    issue.Id, previousAssigneeId: null, newAssigneeId: _draft.AssigneeId,
+                    actorId: _currentUserId, default);
+            }
+            catch { /* best-effort */ }
+        }
+
         _draft = new();
         await ReloadAsync();
     }

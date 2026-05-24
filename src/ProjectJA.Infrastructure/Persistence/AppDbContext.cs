@@ -9,6 +9,8 @@ using ProjectJA.Modules.Identity.Domain;
 using ProjectJA.Modules.Identity.Persistence;
 using ProjectJA.Modules.Issues.Domain;
 using ProjectJA.Modules.Issues.Persistence;
+using ProjectJA.Modules.Notifications.Domain;
+using ProjectJA.Modules.Notifications.Persistence;
 using ProjectJA.Modules.Projects.Domain;
 using ProjectJA.Modules.Projects.Persistence;
 using ProjectJA.Modules.Workflows.Domain;
@@ -30,6 +32,7 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRo
     public DbSet<IssueLink> IssueLinks => Set<IssueLink>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<EmailOutboxEntry> EmailOutbox => Set<EmailOutboxEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -46,6 +49,7 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRo
         modelBuilder.ApplyConfiguration(new IssueLinkConfiguration());
         modelBuilder.ApplyConfiguration(new AttachmentConfiguration());
         modelBuilder.ApplyConfiguration(new AuditEventConfiguration());
+        modelBuilder.ApplyConfiguration(new NotificationConfiguration());
         modelBuilder.ApplyConfiguration(new EmailOutboxEntryConfiguration());
 
         // ASP.NET Identity tables: keep the default names but lower-cased for Postgres.

@@ -16,6 +16,7 @@
 @inject IUserQueries Users
 @inject IAttachmentService Attachments
 @inject IIssueLinkService IssueLinks
+@inject ProjectJA.SharedKernel.Notifications.INotificationService Notifications
 @inject AuthenticationStateProvider Auth
 @inject IRealtimeNotifier Realtime
 @inject BoardEventStream EventStream
@@ -533,6 +534,7 @@
                 return;
             }
 
+            var previousAssigneeId = tracked.AssigneeId;
             tracked.Edit(_edit.Title, _edit.Description, Clock.UtcNow);
             tracked.Reclassify(_edit.Type, _edit.Points, _edit.AcceptanceCriteria, Clock.UtcNow);
             tracked.SetPriority(_edit.Priority, Clock.UtcNow);
@@ -582,6 +584,17 @@
                 tracked.AssignToSprint(_edit.SprintId, Clock.UtcNow);
             }
             await db.SaveChangesAsync();
+
+            // Best-effort notification — failure here must not roll back the
+            // user-visible save. Uses the circuit's scoped DbContext (not the
+            // short-lived factory one used above) which is fine because the
+            // service does its own SaveChangesAsync on a fresh row insert.
+            try
+            {
+                await Notifications.OnIssueAssignedAsync(
+                    tracked.Id, previousAssigneeId, tracked.AssigneeId, _currentUserId, default);
+            }
+            catch { /* swallowed */ }
         }
         catch (Exception ex)
         {
@@ -643,6 +656,8 @@
         }
 
         await BroadcastCommentsChangedAsync();
+        try { await Notifications.OnCommentAddedAsync(IssueId, _currentUserId, default); }
+        catch { /* swallowed */ }
     }
 
     private void OnCommentDblClick(Comment c)

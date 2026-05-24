@@ -1,0 +1,187 @@
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+@using ProjectJA.SharedKernel.Notifications
+@implements IAsyncDisposable
+@inject INotificationService Notifications
+@inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
+
+@if (_userId != Guid.Empty)
+{
+    <MudMenu @ref="_menu" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight"
+             PopoverClass="notif-popover">
+        <ActivatorContent Context="menuCtx">
+            <div @onclick="OpenAsync" style="cursor:pointer;display:inline-flex;align-items:center;">
+                <MudBadge Content="_unreadCount" Overlap="true" Color="Color.Error"
+                          Visible="@(_unreadCount > 0)" Max="99">
+                    <MudIconButton Icon="@Icons.Material.Filled.Notifications"
+                                   Color="Color.Inherit"
+                                   title="@($"{_unreadCount} unread notification{(_unreadCount == 1 ? "" : "s")}")" />
+                </MudBadge>
+            </div>
+        </ActivatorContent>
+        <ChildContent>
+            <div style="min-width:22rem;max-width:26rem;max-height:60vh;overflow-y:auto;">
+                <div style="display:flex;align-items:center;padding:0.5rem 0.75rem;border-bottom:1px solid rgba(0,0,0,0.08);">
+                    <MudText Typo="Typo.subtitle2" Style="font-weight:600;">Notifications</MudText>
+                    <MudSpacer />
+                    @if (_unreadCount > 0)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Text"
+                                   OnClick="MarkAllReadAsync">Mark all read</MudButton>
+                    }
+                </div>
+
+                @if (_loading)
+                {
+                    <div class="pa-3"><MudProgressLinear Indeterminate="true" Color="Color.Primary" /></div>
+                }
+                else if (_items.Count == 0)
+                {
+                    <div class="pa-4" style="text-align:center;color:rgba(0,0,0,0.55);">
+                        <MudText Typo="Typo.body2">No notifications yet.</MudText>
+                    </div>
+                }
+                else
+                {
+                    @foreach (var n in _items)
+                    {
+                        var unread = n.ReadAt is null;
+                        <div @key="n.Id"
+                             style="@($"padding:0.6rem 0.75rem;border-bottom:1px solid rgba(0,0,0,0.06);cursor:pointer;{(unread ? "background:rgba(94,53,177,0.06);" : "")}")"
+                             @onclick="@(() => OpenItemAsync(n))">
+                            <MudText Typo="Typo.body2" Style="@(unread ? "font-weight:600;" : null)">@n.Title</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Default">@FormatAge(n.CreatedAt)</MudText>
+                        </div>
+                    }
+                }
+            </div>
+        </ChildContent>
+    </MudMenu>
+}
+
+@code {
+    private Guid _userId;
+    private int _unreadCount;
+    private bool _loading;
+    private IReadOnlyList<NotificationView> _items = Array.Empty<NotificationView>();
+    private MudMenu? _menu;
+    // Background poller: refresh unread count every 30s while the circuit is
+    // alive. Phase 3 can upgrade to realtime push via IRealtimeNotifier.
+    private CancellationTokenSource? _pollCts;
+    private Task? _pollTask;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        if (!Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _userId))
+            return;
+
+        await RefreshCountAsync();
+
+        _pollCts = new CancellationTokenSource();
+        _pollTask = PollAsync(_pollCts.Token);
+    }
+
+    private async Task PollAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), ct);
+                if (ct.IsCancellationRequested) return;
+                await RefreshCountAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (TaskCanceledException) { /* shutting down */ }
+    }
+
+    private async Task RefreshCountAsync()
+    {
+        try { _unreadCount = await Notifications.GetUnreadCountAsync(_userId, default); }
+        catch { /* swallow — bell stays at last-known count */ }
+    }
+
+    private async Task OpenAsync()
+    {
+        if (_menu is not null) await _menu.OpenMenuAsync(EventArgs.Empty);
+        await LoadListAsync();
+    }
+
+    private async Task LoadListAsync()
+    {
+        _loading = true;
+        try
+        {
+            // Fetch list + recount in parallel so the badge can't lag the list.
+            var listTask = Notifications.ListForUserAsync(_userId, 20, default);
+            var countTask = Notifications.GetUnreadCountAsync(_userId, default);
+            _items = await listTask;
+            _unreadCount = await countTask;
+        }
+        catch
+        {
+            // Leave previous _items/_unreadCount in place; better stale than empty.
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OpenItemAsync(NotificationView n)
+    {
+        // Optimistic local update so the badge + row styling reflect the click
+        // immediately. The DB round-trip + count reconciliation happens after.
+        if (n.ReadAt is null)
+        {
+            var now = DateTimeOffset.UtcNow;
+            _items = _items
+                .Select(x => x.Id == n.Id && x.ReadAt is null
+                    ? x with { ReadAt = now }
+                    : x)
+                .ToList();
+            if (_unreadCount > 0) _unreadCount--;
+            try { await Notifications.MarkReadAsync(n.Id, _userId, default); }
+            catch { /* swallowed — next poll will reconcile */ }
+        }
+        if (_menu is not null) await _menu.CloseMenuAsync();
+        if (!string.IsNullOrWhiteSpace(n.Link)) Nav.NavigateTo(n.Link);
+    }
+
+    private async Task MarkAllReadAsync()
+    {
+        // Same optimistic pattern — flip every visible row + zero the badge
+        // before the round-trip so the UI feels instant.
+        var now = DateTimeOffset.UtcNow;
+        _items = _items
+            .Select(x => x.ReadAt is null ? x with { ReadAt = now } : x)
+            .ToList();
+        _unreadCount = 0;
+        try { await Notifications.MarkAllReadAsync(_userId, default); }
+        catch { /* swallowed — next poll will reconcile */ }
+    }
+
+    private static string FormatAge(DateTimeOffset at)
+    {
+        var delta = DateTimeOffset.UtcNow - at;
+        if (delta.TotalSeconds < 60) return "just now";
+        if (delta.TotalMinutes < 60) return $"{(int)delta.TotalMinutes}m ago";
+        if (delta.TotalHours < 24) return $"{(int)delta.TotalHours}h ago";
+        if (delta.TotalDays < 7) return $"{(int)delta.TotalDays}d ago";
+        return at.LocalDateTime.ToString("yyyy-MM-dd");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            _pollCts?.Cancel();
+            if (_pollTask is not null) await _pollTask;
+        }
+        catch { /* shutting down */ }
+        finally { _pollCts?.Dispose(); }
+    }
+}
