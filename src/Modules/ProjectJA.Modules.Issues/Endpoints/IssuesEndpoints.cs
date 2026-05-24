@@ -562,7 +562,7 @@ internal static class IssuesEndpoints
             db.Entry(comment).State = EntityState.Added;
             await db.SaveChangesAsync(ct);
 
-            try { await notifications.OnCommentAddedAsync(issue.Id, req.AuthorId, ct); }
+            try { await notifications.OnCommentAddedAsync(issue.Id, req.AuthorId, req.Body, ct); }
             catch { /* best-effort */ }
             return Results.Created($"/api/issues/{id}/comments/{comment.Id}", new { comment.Id });
         })

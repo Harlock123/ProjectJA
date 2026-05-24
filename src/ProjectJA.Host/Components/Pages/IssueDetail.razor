@@ -267,7 +267,8 @@ else
         {
             <MudTextField @bind-Value="_newComment" Label="Add a comment"
                           Variant="Variant.Outlined" Lines="3" MaxLength="8000"
-                          Immediate="true" Class="mt-3" />
+                          Immediate="true" Class="mt-3"
+                          HelperText="@MentionHint" />
             @if (_commentError is not null) { <MudAlert Severity="Severity.Error" Class="mt-2">@_commentError</MudAlert> }
             <div class="mt-2">
                 <MudButton OnClick="AddCommentAsync" Variant="Variant.Filled" Color="Color.Primary"
@@ -335,6 +336,9 @@ else
     private List<AttachmentSummary>? _attachments;
     private List<Comment>? _comments;
     private string _newComment = "";
+    // Razor attribute values can't contain literal '@' reliably; bind via this.
+    private const string MentionHint =
+        "Tip: mention someone with @email-prefix (e.g. @alice for alice@example.com) to send them a notification.";
     private string? _commentError;
     private string? _error;
     private string? _saveError;
@@ -518,14 +522,15 @@ else
             var tracked = await Db.Issues.Include(i => i.Comments).FirstOrDefaultAsync(i => i.Id == IssueId);
             if (tracked is null) { _commentError = "Issue no longer exists."; return; }
 
-            var comment = tracked.AddComment(_currentUserId, _newComment.Trim(), Clock.UtcNow);
+            var body = _newComment.Trim();
+            var comment = tracked.AddComment(_currentUserId, body, Clock.UtcNow);
             Db.Entry(comment).State = EntityState.Added;
             await Db.SaveChangesAsync();
 
             _newComment = "";
             await ReloadAsync();
 
-            try { await Notifications.OnCommentAddedAsync(IssueId, _currentUserId, default); }
+            try { await Notifications.OnCommentAddedAsync(IssueId, _currentUserId, body, default); }
             catch { /* best-effort */ }
         }
         catch (Exception ex)

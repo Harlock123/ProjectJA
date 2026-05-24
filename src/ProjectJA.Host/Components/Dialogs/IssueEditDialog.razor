@@ -336,7 +336,8 @@
                         {
                             <MudTextField @bind-Value="_newComment" Label="Add a comment"
                                           Variant="Variant.Outlined" Lines="3" MaxLength="8000"
-                                          Immediate="true" />
+                                          Immediate="true"
+                                          HelperText="@MentionHint" />
                             @if (_commentError is not null) { <MudAlert Severity="Severity.Error">@_commentError</MudAlert> }
                             <div>
                                 <MudButton OnClick="AddCommentAsync" Variant="Variant.Filled" Color="Color.Primary"
@@ -380,6 +381,12 @@
     private string _editBody = "";
     private string _uploadInputId = "";
     private string _newComment = "";
+    private string _lastCommentBody = "";
+    // Razor attribute values can't contain literal '@' (it triggers expression
+    // parsing and even @@ isn't reliable in component attrs), so the hint
+    // string lives in code and binds via @MentionHint.
+    private const string MentionHint =
+        "Tip: mention someone with @email-prefix (e.g. @alice for alice@example.com) to send them a notification.";
     private IReadOnlyList<UserSummary> _users = Array.Empty<UserSummary>();
     private Dictionary<Guid, string> _userNames = new();
     private List<AttachmentSummary>? _attachments;
@@ -655,7 +662,8 @@
                 return;
             }
 
-            var comment = tracked.AddComment(_currentUserId, _newComment.Trim(), Clock.UtcNow);
+            var body = _newComment.Trim();
+            var comment = tracked.AddComment(_currentUserId, body, Clock.UtcNow);
             // Domain-assigned Guid key → EF would UPDATE (0 rows) instead of
             // INSERT; force the new owned child to Added.
             db.Entry(comment).State = EntityState.Added;
@@ -664,6 +672,10 @@
             _newComment = "";
             _changed = true;
             await ReloadCommentsCoreAsync();
+
+            // Captured before clearing so @-mention parsing has the actual
+            // body to scan.
+            _lastCommentBody = body;
         }
         catch (Exception ex)
         {
@@ -672,7 +684,7 @@
         }
 
         await BroadcastCommentsChangedAsync();
-        try { await Notifications.OnCommentAddedAsync(IssueId, _currentUserId, default); }
+        try { await Notifications.OnCommentAddedAsync(IssueId, _currentUserId, _lastCommentBody, default); }
         catch { /* swallowed */ }
     }
 

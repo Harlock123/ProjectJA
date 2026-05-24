@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using ProjectJA.Modules.Identity.Domain;
 using ProjectJA.Modules.Issues.Domain;
 using ProjectJA.Modules.Notifications.Domain;
 using ProjectJA.Modules.Projects.Domain;
@@ -72,33 +74,107 @@ internal sealed class NotificationService(DbContext db, IClock clock) : INotific
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task OnCommentAddedAsync(Guid issueId, Guid commentAuthorId, CancellationToken ct)
+    public async Task OnCommentAddedAsync(Guid issueId, Guid commentAuthorId, string body, CancellationToken ct)
     {
         var info = await LoadIssueRefAsync(issueId, ct);
         if (info is null) return;
 
-        // Notify the assignee + reporter, minus the comment author (no self-
-        // notifications). If both are the same user, dedupe.
-        var recipients = new HashSet<Guid>();
-        if (info.Value.AssigneeId is { } aid && aid != commentAuthorId) recipients.Add(aid);
-        if (info.Value.ReporterId != Guid.Empty && info.Value.ReporterId != commentAuthorId)
-            recipients.Add(info.Value.ReporterId);
-        if (recipients.Count == 0) return;
+        // Resolve @mentions first so the assignee/reporter notification can
+        // dedupe against them — a mentioned user is the more specific signal,
+        // we don't want them seeing two notifications for one comment.
+        var mentionedIds = await ResolveMentionsAsync(body, ct);
+        mentionedIds.Remove(commentAuthorId); // no self-mentions
 
-        var title = $"New comment on {info.Value.Key}-{info.Value.Number}: {Truncate(info.Value.Title, 140)}";
         var now = clock.UtcNow;
-        foreach (var uid in recipients)
+        var truncatedTitle = Truncate(info.Value.Title, 140);
+        var link = $"/issues/{issueId}";
+
+        // Mention notifications (specific signal).
+        foreach (var mid in mentionedIds)
         {
             db.Set<Notification>().Add(Notification.Create(
-                recipientUserId: uid,
+                recipientUserId: mid,
                 actorId: commentAuthorId,
-                kind: NotificationKinds.IssueCommented,
-                title: title,
-                link: $"/issues/{issueId}",
+                kind: NotificationKinds.CommentMentioned,
+                title: $"You were mentioned on {info.Value.Key}-{info.Value.Number}: {truncatedTitle}",
+                link: link,
                 resourceId: issueId,
                 now: now));
         }
-        await db.SaveChangesAsync(ct);
+
+        // Generic comment notifications — assignee + reporter minus the author
+        // minus anyone already getting a mention notification above.
+        var generic = new HashSet<Guid>();
+        if (info.Value.AssigneeId is { } aid && aid != commentAuthorId && !mentionedIds.Contains(aid))
+            generic.Add(aid);
+        if (info.Value.ReporterId != Guid.Empty
+            && info.Value.ReporterId != commentAuthorId
+            && !mentionedIds.Contains(info.Value.ReporterId))
+            generic.Add(info.Value.ReporterId);
+
+        if (generic.Count > 0)
+        {
+            var title = $"New comment on {info.Value.Key}-{info.Value.Number}: {truncatedTitle}";
+            foreach (var uid in generic)
+            {
+                db.Set<Notification>().Add(Notification.Create(
+                    recipientUserId: uid,
+                    actorId: commentAuthorId,
+                    kind: NotificationKinds.IssueCommented,
+                    title: title,
+                    link: link,
+                    resourceId: issueId,
+                    now: now));
+            }
+        }
+
+        if (mentionedIds.Count > 0 || generic.Count > 0)
+            await db.SaveChangesAsync(ct);
+    }
+
+    // Matches @<token> where token is letters/digits/dots/underscores/dashes.
+    // Deliberately conservative — emojis, accented characters and trailing
+    // punctuation don't make it into the captured group.
+    private static readonly Regex MentionPattern = new(@"@([A-Za-z0-9._-]+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>Extract @tokens from <paramref name="body"/> and resolve each
+    /// against the tenant's users by email-prefix (the part before the @ in
+    /// the user's Email). First match wins on collision; unknown tokens are
+    /// silently dropped. Returns the set of resolved user IDs (deduped).</summary>
+    private async Task<HashSet<Guid>> ResolveMentionsAsync(string? body, CancellationToken ct)
+    {
+        var result = new HashSet<Guid>();
+        if (string.IsNullOrWhiteSpace(body)) return result;
+        var tokens = MentionPattern.Matches(body)
+            .Select(m => m.Groups[1].Value.ToLowerInvariant())
+            .Distinct()
+            .ToList();
+        if (tokens.Count == 0) return result;
+
+        // Tenant user counts are small in practice (B2B SaaS), so loading the
+        // full address list and resolving in-memory is fine. Switch to a push-
+        // down SQL `substring(email, 1, position('@' in email) - 1)` query if
+        // this ever becomes a hot path.
+        var users = await db.Set<ApplicationUser>().AsNoTracking()
+            .Where(u => u.Email != null)
+            .Select(u => new { u.Id, u.Email })
+            .ToListAsync(ct);
+
+        foreach (var t in tokens)
+        {
+            var match = users.FirstOrDefault(u =>
+                u.Email is not null &&
+                EmailPrefix(u.Email).Equals(t, StringComparison.OrdinalIgnoreCase));
+            if (match is not null) result.Add(match.Id);
+        }
+        return result;
+    }
+
+    private static string EmailPrefix(string email)
+    {
+        var at = email.IndexOf('@');
+        return at <= 0 ? email : email[..at];
     }
 
     public async Task OnIssueTransitionedAsync(

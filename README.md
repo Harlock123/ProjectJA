@@ -136,7 +136,8 @@ In-app inbox accessible from the bell icon in the top-right app bar. Per-tenant 
 | Event kind | Trigger | Recipient(s) | Link |
 | --- | --- | --- | --- |
 | `issue.assigned` | An issue's assignee changes to a non-null new user | The new assignee, unless they're the actor | `/issues/{id}` |
-| `issue.commented` | A comment is added to an issue | The issue's assignee + reporter, minus the comment author (HashSet-deduped if same user) | `/issues/{id}` |
+| `issue.commented` | A comment is added to an issue | The issue's assignee + reporter, minus the comment author and minus anyone @-mentioned in the body (the mention is the higher-signal notification) | `/issues/{id}` |
+| `comment.mentioned` | A comment's body contains `@<email-prefix>` that resolves to a tenant user | Each resolved user, minus the comment author | `/issues/{id}` |
 | `issue.done` | An issue transitions into a Done-category workflow state | The reporter + assignee, minus the actor | `/issues/{id}` |
 | `issue.blocker_added` | A blocker is added to an issue | The assignee of the *blocked* issue, unless they're the actor | `/issues/{blocked-id}` |
 | `issue.sprint_changed` | An issue is moved into / between / out of a sprint | The assignee, unless they're the actor (title varies: "moved into sprint X" / "moved to sprint Y" / "returned to backlog") | `/issues/{id}` |
@@ -147,6 +148,10 @@ In-app inbox accessible from the bell icon in the top-right app bar. Per-tenant 
 | `security.recovery_codes_regenerated` | A user mints fresh 2FA recovery codes | The user themselves | `/settings` |
 
 **Recipient rules.** For events where the actor "did" something to other people (assignment, comment, blocker, transition, sprint), the actor is filtered out — no self-notifications. For *security* events the user IS deliberately notified about their own action: the paper trail is the point. If a hijacked session silently changes your password or disables your 2FA, the next legitimate sign-in shows that notification. Multi-recipient events (commented, transitioned) de-dupe via `HashSet<Guid>` so an assignee-who-is-also-the-reporter only gets one row.
+
+**@-mention dynamic.** `NotificationService.OnCommentAddedAsync` takes the comment body, scans it with a compiled regex `@([A-Za-z0-9._-]+)` (deliberately conservative — accented characters, emoji, and trailing punctuation don't make it into the captured token), and resolves each token by case-insensitive match against the **email-prefix** of `ApplicationUser.Email` (the part before the `@`). So a comment body of *"Hey @alice, can you take a look?"* resolves `alice` against `alice@example.com`, `alice@anothercorp.io`, etc. (first match wins on collision — rare in practice, since emails are unique within a tenant and same-prefix-different-domain is uncommon). Resolved mentions fire one `comment.mentioned` notification per user; the generic `issue.commented` notification then fires for assignee + reporter **minus** anyone already getting a mention (the mention is the higher-signal notification — we don't want a single comment to produce two notifications for the same user). Unknown tokens are silently ignored. The comment text remains plain-text in the DB; styling / clickable mention chips at render time is a phase-2 polish.
+
+**Mention input UX.** Both comment textareas (the IssueEditDialog Comments tab and `IssueDetail.razor`) carry a `HelperText`: *"Tip: mention someone with @email-prefix (e.g. @alice for alice@example.com)."* No autocomplete-as-you-type popup yet — that's a deliberate phase-2 deferral because MudBlazor doesn't ship a mention-style overlay component, so a clean version requires custom JS that listens for `@` keystrokes, computes cursor position, and shows a positioned filterable list. Manually typing `@<prefix>` works end-to-end today; the autocomplete is just sugar.
 
 **Trigger sites.** Every domain mutation that raises a notification wraps the call in a best-effort `try { … } catch { /* swallowed */ }` so a notification failure can never roll back the user-visible operation.
 - **REST endpoints**: `POST /api/projects/{id}/issues` (assignment on create), `PUT /api/issues/{id}` (assignment on edit), `PATCH /api/issues/{id}/status` (transition + auto-done), `PATCH /api/issues/{id}/sprint`, `POST /api/issues/{id}/blockers`, `POST /api/issues/{id}/comments`.
@@ -162,7 +167,9 @@ In-app inbox accessible from the bell icon in the top-right app bar. Per-tenant 
 
 **Refresh cadence.** The bell polls `/api/notifications/unread-count` every 30 seconds while the circuit is alive. Opening the popover re-fetches the list + count *sequentially* (one DbContext, two awaits — EF Core throws "second operation started on this context" if they overlap, so parallelism here is a bug, not a feature). Realtime push (via `IRealtimeNotifier` to per-user SignalR groups, e.g. `tenant:{tid:N}:user:{uid:N}`) is the natural next step — the existing `BoardEventStream` + Redis backplane already support that pattern; the bell would subscribe in `OnInitializedAsync` and increment locally as events arrive.
 
-**Deferred event sources** (good candidates for future slices, in rough value order): sprint started (fan-out to every assignee with an issue in the sprint), `@username` mentions in comments (needs mention-parser + autocomplete UX), invite accepted (notify the inviter), email digest of the day's notifications, attachment added on an issue you're assigned to.
+**Deferred event sources** (good candidates for future slices, in rough value order): sprint started (fan-out to every assignee with an issue in the sprint), invite accepted (notify the inviter), email digest of the day's notifications, attachment added on an issue you're assigned to.
+
+**Deferred mention polish**: inline `@`-autocomplete in the comment textarea (needs custom JS — see "Mention input UX" above), styled mention rendering in displayed comments (parse `@token` at render time and wrap each in a `MudLink` / chip pointing at the user), full-email syntax (`@alice@example.com`) as an alternative when the email-prefix is ambiguous across multiple domains.
 
 ### Deferred to follow-up slices
 All commitments from `ProjectJAbeginning.md` are landed; integration tests, OpenAPI/Scalar, observability, and CI/CD have their own dedicated sections farther down. Actual outstanding items:

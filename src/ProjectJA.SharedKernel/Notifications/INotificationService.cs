@@ -17,6 +17,7 @@ public static class NotificationKinds
 {
     public const string IssueAssigned       = "issue.assigned";
     public const string IssueCommented      = "issue.commented";
+    public const string CommentMentioned    = "comment.mentioned";
     public const string IssueDone           = "issue.done";
     public const string IssueBlockerAdded   = "issue.blocker_added";
     public const string IssueSprintChanged  = "issue.sprint_changed";
@@ -52,8 +53,13 @@ public interface INotificationService
         CancellationToken ct);
 
     /// <summary>Fire when a comment is added. Notifies the issue's assignee
-    /// and reporter, minus the comment author (no self-notifications).</summary>
-    Task OnCommentAddedAsync(Guid issueId, Guid commentAuthorId, CancellationToken ct);
+    /// and reporter, minus the comment author (no self-notifications).
+    /// Additionally parses <paramref name="body"/> for <c>@email-prefix</c>
+    /// mentions and raises a <c>comment.mentioned</c> notification for each
+    /// resolved user. When a user would otherwise receive both the generic
+    /// "issue.commented" and a "comment.mentioned", only the mention fires —
+    /// it's the higher-signal notification.</summary>
+    Task OnCommentAddedAsync(Guid issueId, Guid commentAuthorId, string body, CancellationToken ct);
 
     /// <summary>Fire AFTER an issue transitions to a workflow state. Only
     /// produces a notification when <paramref name="isDoneCategory"/> is true.
