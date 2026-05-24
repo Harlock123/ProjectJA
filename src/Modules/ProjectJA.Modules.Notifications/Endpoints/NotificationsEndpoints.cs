@@ -16,12 +16,14 @@ internal static class NotificationsEndpoints
 
         group.MapGet("/", async (
             [FromQuery] int? limit,
+            [FromQuery] bool? unreadOnly,
             [FromServices] INotificationService notifications,
             HttpContext http,
             CancellationToken ct) =>
         {
             if (!TryGetUserId(http, out var userId)) return Results.Unauthorized();
-            return Results.Ok(await notifications.ListForUserAsync(userId, limit ?? 20, ct));
+            return Results.Ok(await notifications.ListForUserAsync(
+                userId, limit ?? 20, unreadOnly ?? false, ct));
         })
         .WithName("ListNotifications")
         .WithSummary("List the signed-in user's recent notifications (newest first).")

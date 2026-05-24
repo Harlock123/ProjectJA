@@ -34,7 +34,12 @@ public static class NotificationKinds
 /// Notifications implementation module.</summary>
 public interface INotificationService
 {
-    Task<IReadOnlyList<NotificationView>> ListForUserAsync(Guid userId, int limit, CancellationToken ct);
+    /// <summary>List the user's most recent notifications, newest first.
+    /// Pass <paramref name="unreadOnly"/> = true to restrict to unread (the
+    /// bell popover uses this so the visible list stays in sync with the
+    /// badge count).</summary>
+    Task<IReadOnlyList<NotificationView>> ListForUserAsync(Guid userId, int limit, bool unreadOnly, CancellationToken ct);
+
     Task<int> GetUnreadCountAsync(Guid userId, CancellationToken ct);
     Task MarkReadAsync(Guid notificationId, Guid actingUserId, CancellationToken ct);
     Task MarkAllReadAsync(Guid userId, CancellationToken ct);

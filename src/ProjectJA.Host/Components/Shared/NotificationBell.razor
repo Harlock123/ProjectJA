@@ -5,6 +5,7 @@
 @inject INotificationService Notifications
 @inject AuthenticationStateProvider Auth
 @inject NavigationManager Nav
+@inject ILogger<NotificationBell> Logger
 
 @if (_userId != Guid.Empty)
 {
@@ -39,18 +40,19 @@
                 else if (_items.Count == 0)
                 {
                     <div class="pa-4" style="text-align:center;color:rgba(0,0,0,0.55);">
-                        <MudText Typo="Typo.body2">No notifications yet.</MudText>
+                        <MudText Typo="Typo.body2">You're all caught up.</MudText>
                     </div>
                 }
                 else
                 {
+                    @* Every row here is unread (the popover restricts to
+                       unread-only); style accordingly. *@
                     @foreach (var n in _items)
                     {
-                        var unread = n.ReadAt is null;
                         <div @key="n.Id"
-                             style="@($"padding:0.6rem 0.75rem;border-bottom:1px solid rgba(0,0,0,0.06);cursor:pointer;{(unread ? "background:rgba(94,53,177,0.06);" : "")}")"
+                             style="padding:0.6rem 0.75rem;border-bottom:1px solid rgba(0,0,0,0.06);cursor:pointer;background:rgba(94,53,177,0.06);"
                              @onclick="@(() => OpenItemAsync(n))">
-                            <MudText Typo="Typo.body2" Style="@(unread ? "font-weight:600;" : null)">@n.Title</MudText>
+                            <MudText Typo="Typo.body2" Style="font-weight:600;">@n.Title</MudText>
                             <MudText Typo="Typo.caption" Color="Color.Default">@FormatAge(n.CreatedAt)</MudText>
                         </div>
                     }
@@ -101,7 +103,12 @@
     private async Task RefreshCountAsync()
     {
         try { _unreadCount = await Notifications.GetUnreadCountAsync(_userId, default); }
-        catch { /* swallow — bell stays at last-known count */ }
+        catch (Exception ex)
+        {
+            // Bell stays at last-known count; log so a recurring failure shows
+            // up in Serilog instead of silently degrading the UX.
+            Logger.LogWarning(ex, "NotificationBell: failed to refresh unread count for user {UserId}.", _userId);
+        }
     }
 
     private async Task OpenAsync()
@@ -115,15 +122,21 @@
         _loading = true;
         try
         {
-            // Fetch list + recount in parallel so the badge can't lag the list.
-            var listTask = Notifications.ListForUserAsync(_userId, 20, default);
-            var countTask = Notifications.GetUnreadCountAsync(_userId, default);
-            _items = await listTask;
-            _unreadCount = await countTask;
+            // Sequential, not parallel: the service uses the circuit-scoped
+            // DbContext, and EF Core throws "second operation started on this
+            // context" if two queries overlap. Cheap queries — the round-trips
+            // serialise fine in practice.
+            // Bell shows only UNREAD items so the visible list stays in sync
+            // with the badge count. Older read items live on in the DB for
+            // future "view all" surfaces, but they don't accumulate here.
+            _items = await Notifications.ListForUserAsync(_userId, 20, unreadOnly: true, default);
+            _unreadCount = await Notifications.GetUnreadCountAsync(_userId, default);
         }
-        catch
+        catch (Exception ex)
         {
-            // Leave previous _items/_unreadCount in place; better stale than empty.
+            // Leave previous _items/_unreadCount in place (better stale than
+            // empty). Logged so silent stale state has a paper trail.
+            Logger.LogWarning(ex, "NotificationBell: failed to load notifications for user {UserId}.", _userId);
         }
         finally
         {
@@ -133,19 +146,20 @@
 
     private async Task OpenItemAsync(NotificationView n)
     {
-        // Optimistic local update so the badge + row styling reflect the click
-        // immediately. The DB round-trip + count reconciliation happens after.
+        // Optimistic local update: drop the row from the unread-only popover
+        // list and decrement the badge immediately. The DB round-trip + count
+        // reconciliation happens after.
         if (n.ReadAt is null)
         {
-            var now = DateTimeOffset.UtcNow;
-            _items = _items
-                .Select(x => x.Id == n.Id && x.ReadAt is null
-                    ? x with { ReadAt = now }
-                    : x)
-                .ToList();
+            _items = _items.Where(x => x.Id != n.Id).ToList();
             if (_unreadCount > 0) _unreadCount--;
             try { await Notifications.MarkReadAsync(n.Id, _userId, default); }
-            catch { /* swallowed — next poll will reconcile */ }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex,
+                    "NotificationBell: failed to mark notification {NotificationId} read for user {UserId}; next poll will reconcile.",
+                    n.Id, _userId);
+            }
         }
         if (_menu is not null) await _menu.CloseMenuAsync();
         if (!string.IsNullOrWhiteSpace(n.Link)) Nav.NavigateTo(n.Link);
@@ -153,15 +167,17 @@
 
     private async Task MarkAllReadAsync()
     {
-        // Same optimistic pattern — flip every visible row + zero the badge
-        // before the round-trip so the UI feels instant.
-        var now = DateTimeOffset.UtcNow;
-        _items = _items
-            .Select(x => x.ReadAt is null ? x with { ReadAt = now } : x)
-            .ToList();
+        // Same pattern — empty the unread list + zero the badge before the
+        // round-trip so the UI feels instant.
+        _items = Array.Empty<NotificationView>();
         _unreadCount = 0;
         try { await Notifications.MarkAllReadAsync(_userId, default); }
-        catch { /* swallowed — next poll will reconcile */ }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex,
+                "NotificationBell: failed to mark all notifications read for user {UserId}; next poll will reconcile.",
+                _userId);
+        }
     }
 
     private static string FormatAge(DateTimeOffset at)

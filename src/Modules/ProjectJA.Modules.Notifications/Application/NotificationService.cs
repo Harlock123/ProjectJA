@@ -10,12 +10,13 @@ namespace ProjectJA.Modules.Notifications.Application;
 
 internal sealed class NotificationService(DbContext db, IClock clock) : INotificationService
 {
-    public async Task<IReadOnlyList<NotificationView>> ListForUserAsync(Guid userId, int limit, CancellationToken ct)
+    public async Task<IReadOnlyList<NotificationView>> ListForUserAsync(Guid userId, int limit, bool unreadOnly, CancellationToken ct)
     {
         var clamped = Math.Clamp(limit, 1, 100);
-        return await db.Set<Notification>()
-            .AsNoTracking()
-            .Where(n => n.RecipientUserId == userId)
+        var q = db.Set<Notification>().AsNoTracking()
+            .Where(n => n.RecipientUserId == userId);
+        if (unreadOnly) q = q.Where(n => n.ReadAt == null);
+        return await q
             .OrderByDescending(n => n.CreatedAt)
             .Take(clamped)
             .Select(n => new NotificationView(
