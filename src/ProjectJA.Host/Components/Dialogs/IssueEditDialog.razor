@@ -325,7 +325,9 @@
                                             }
                                             else
                                             {
-                                                <MudText Typo="Typo.body2" Style="white-space:pre-wrap;">@c.Body</MudText>
+                                                <MudText Typo="Typo.body2" Style="white-space:pre-wrap;">
+                                                    <CommentBody Body="@c.Body" Users="_users" />
+                                                </MudText>
                                             }
                                         </MudPaper>
                                     }

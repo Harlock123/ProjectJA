@@ -257,7 +257,9 @@ else
                                 <strong>@CommentAuthorName(c.AuthorId)</strong> · @c.CreatedAt.ToString("yyyy-MM-dd HH:mm")
                             </MudText>
                         </MudStack>
-                        <MudText Typo="Typo.body2" Style="white-space:pre-wrap;" Class="mt-1">@c.Body</MudText>
+                        <MudText Typo="Typo.body2" Style="white-space:pre-wrap;" Class="mt-1">
+                            <CommentBody Body="@c.Body" Users="_users" />
+                        </MudText>
                     </MudPaper>
                 }
             </MudStack>

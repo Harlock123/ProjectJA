@@ -1,0 +1,85 @@
+@using ProjectJA.Modules.Identity.Contracts
+@using ProjectJA.SharedKernel.Notifications
+
+@*
+    Renders a comment body with @-mentions styled inline. Caller passes the
+    full user list so we can resolve a token's email-prefix → display name.
+    A resolved mention shows the user's display name in a coloured pill with
+    the email on hover; an unresolved one (typo, deleted user) keeps the raw
+    @token in muted styling so the author can see what didn't match.
+
+    Body is rendered as plain text via Blazor's normal interpolation — no
+    MarkupString — so an XSS payload in the body can't escape the rendering.
+*@
+@foreach (var part in Parse())
+{
+    @if (part.UserId is { } uid && _resolved.TryGetValue(uid, out var u))
+    {
+        <span style="color:var(--mud-palette-primary);background:rgba(94,53,177,0.08);padding:0 0.3rem;border-radius:3px;font-weight:500;"
+              title="@u.Email">@($"@{u.DisplayName}")</span>
+    }
+    else if (part.Token is not null)
+    {
+        <span style="color:var(--mud-palette-text-secondary);font-style:italic;"
+              title="No user matches this mention.">@($"@{part.Token}")</span>
+    }
+    else
+    {
+        @part.Text
+    }
+}
+
+@code {
+    /// <summary>The raw comment body. Newlines + whitespace are preserved by
+    /// the surrounding container's <c>white-space:pre-wrap</c> style.</summary>
+    [Parameter, EditorRequired] public string? Body { get; set; }
+
+    /// <summary>The candidate users a mention can resolve against — typically
+    /// the tenant-wide list loaded via <c>IUserQueries.ListAllAsync</c>.</summary>
+    [Parameter] public IReadOnlyList<UserSummary>? Users { get; set; }
+
+    private readonly Dictionary<Guid, UserSummary> _resolved = new();
+
+    private sealed record Part(string? Text, string? Token, Guid? UserId);
+
+    protected override void OnParametersSet()
+    {
+        // Rebuild the dictionary on each parameter pass — Users is typically
+        // small (org-wide), so the alloc is negligible and we don't have to
+        // worry about a stale cache after a tenant user join/leave.
+        _resolved.Clear();
+        if (Users is not null)
+            foreach (var u in Users) _resolved[u.Id] = u;
+    }
+
+    private IEnumerable<Part> Parse()
+    {
+        if (string.IsNullOrEmpty(Body)) yield break;
+        var cursor = 0;
+        foreach (System.Text.RegularExpressions.Match m in MentionTokens.Pattern.Matches(Body))
+        {
+            if (m.Index > cursor)
+                yield return new Part(Body.Substring(cursor, m.Index - cursor), null, null);
+            var token = m.Groups[1].Value;
+            yield return new Part(null, token, ResolveToUserId(token));
+            cursor = m.Index + m.Length;
+        }
+        if (cursor < Body.Length)
+            yield return new Part(Body[cursor..], null, null);
+    }
+
+    private Guid? ResolveToUserId(string token)
+    {
+        if (Users is null) return null;
+        foreach (var u in Users)
+        {
+            var email = u.Email;
+            if (string.IsNullOrEmpty(email)) continue;
+            var at = email.IndexOf('@');
+            var prefix = at <= 0 ? email : email[..at];
+            if (prefix.Equals(token, StringComparison.OrdinalIgnoreCase))
+                return u.Id;
+        }
+        return null;
+    }
+}

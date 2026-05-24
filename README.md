@@ -171,6 +171,32 @@ In-app inbox accessible from the bell icon in the top-right app bar. Per-tenant 
 
 **Deferred mention polish**: inline `@`-autocomplete in the comment textarea (needs custom JS — see "Mention input UX" above), styled mention rendering in displayed comments (parse `@token` at render time and wrap each in a `MudLink` / chip pointing at the user), full-email syntax (`@alice@example.com`) as an alternative when the email-prefix is ambiguous across multiple domains.
 
+### My Issues
+
+Personal landing page at `/my-issues` (`Components/Pages/MyIssues.razor`) showing every issue across the projects you're a member of that's related to you. Top-bar entry sits between **Projects** and the admin-only nav, and the existing `IProjectQueries.ListMemberProjectIdsAsync` gate scopes the query to projects you can see (same gate as `/api/projects` and `/api/issues/search`).
+
+**Filters**
+- **Relation** (button group, single-select): `Assigned to me` (default) · `Reported by me` · `Either` · `Mentioned`.
+- **Open only** (switch, default on) — hides issues whose current workflow state is in the `Done` category. The filter happens client-side after load because the category lives on `WorkflowState` (not on `Issue`), so an issue's "openness" can flip just by re-categorising a state.
+- **Group by project** (switch, default off) — pure presentation, no extra round-trip; flips a `TableGroupDefinition<Issue>` on the MudTable so each project gets a folder-icon header row with an issue count above its rows.
+
+**Mentioned filter** (`Relation.Mentioned`) resolves the signed-in user's email-prefix (the part before the `@`) and runs a two-step query:
+1. **Coarse SQL pass** — `Where(i.Comments.Any(c => EF.Functions.ILike(c.Body, "%@<prefix>%")))`. Translates to Postgres `ILIKE`, indexable via `pg_trgm` later if real-world bodies grow large.
+2. **Client-side refine** — re-applies `MentionTokens.ContainsMention(body, prefix)` (the same compiled regex `@([A-Za-z0-9._-]+)` the notification fan-out uses, now living in `SharedKernel.Notifications` so there's one definition of "what counts as a mention"). Drops false positives like `@alice` matching `@alice123`.
+
+**Table columns** (one row per issue, sortable):
+- Key (`KEY-N` monospace link → `/issues/{id}`).
+- Title (same link).
+- Status (`MudChip` coloured by workflow-state category — grey/Open, amber/InProgress, green/Done).
+- Priority (`MudChip` coloured by `IssuePriority`, outlined when `None`).
+- Assignee (`UserAvatar` + display name; "unassigned" when null).
+- Sprint (sprint-loop chip with the sprint name; "backlog" when null).
+- Updated (relative age — "2h ago" / "3d ago" / full date past a week, with the UTC instant on hover).
+
+**Cap and pagination.** Hard cap of 200 most-recently-updated. Footer caption shows the count. The cap applies *before* both the `Open only` client filter and the mention regex refine, so very-large tenants could see fewer than 200 rows after refinement — a fair trade for a single-page snappy view. Add paging if a real workload pushes routinely past 200.
+
+**Saved/custom filters** are deliberately deferred — the four built-in chips cover the 80% case. A per-user "save this filter under a name" surface is the natural phase 2 if the chips ever feel limiting.
+
 ### Deferred to follow-up slices
 All commitments from `ProjectJAbeginning.md` are landed; integration tests, OpenAPI/Scalar, observability, and CI/CD have their own dedicated sections farther down. Actual outstanding items:
 - **Sprint reports — small polish.** Surface `sprint.completed` audit `Detail.issuesReturnedToBacklog` on the Completed-sprint inline report so the carry-over count is visible without going to the audit log.
