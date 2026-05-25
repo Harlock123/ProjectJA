@@ -9,26 +9,46 @@
     Usage:
         <HelpTooltip Text="Story points are a relative effort estimate; leave blank if unestimated." />
 
+    Long tooltips wrap automatically at the configured MaxWidth (default 24rem),
+    and any '\n' you include in the Text becomes an explicit line break via
+    white-space:pre-line. Use TooltipContent instead of Text so the body div
+    can carry its own width + wrapping styles — Text alone would render in a
+    container with no width constraint and overflow the viewport.
+
     The component subscribes to TooltipState.Changed so flipping the toggle in
     Settings flows through every visible HelpTooltip without a page reload.
 *@
 
 @if (State.Enabled)
 {
-    <MudTooltip Text="@Text" Placement="@Placement" Arrow="true">
-        <MudIcon Icon="@Icons.Material.Outlined.HelpOutline"
-                 Size="@Size"
-                 Color="Color.Default"
-                 Style="cursor:help;vertical-align:middle;opacity:0.6;" />
+    <MudTooltip Placement="@Placement" Arrow="true">
+        <TooltipContent>
+            <div style="@($"max-width:{MaxWidth};white-space:pre-line;line-height:1.4;")">
+                @Text
+            </div>
+        </TooltipContent>
+        <ChildContent>
+            <MudIcon Icon="@Icons.Material.Outlined.HelpOutline"
+                     Size="@Size"
+                     Color="Color.Default"
+                     Style="cursor:help;vertical-align:middle;opacity:0.6;" />
+        </ChildContent>
     </MudTooltip>
 }
 
 @code {
-    /// <summary>Tooltip body. Plain text — no markdown / HTML rendering today.</summary>
+    /// <summary>Tooltip body. Plain text — no markdown / HTML rendering today.
+    /// Embed '\n' for explicit line breaks (rendered via white-space:pre-line
+    /// in the popup body).</summary>
     [Parameter, EditorRequired] public string Text { get; set; } = "";
 
     [Parameter] public Size Size { get; set; } = Size.Small;
     [Parameter] public Placement Placement { get; set; } = Placement.Top;
+
+    /// <summary>CSS max-width of the tooltip popup body. Long text wraps to
+    /// the next line at this boundary. Default <c>24rem</c> reads comfortably
+    /// without spilling off either edge on typical layouts.</summary>
+    [Parameter] public string MaxWidth { get; set; } = "24rem";
 
     protected override void OnInitialized() => State.Changed += OnChanged;
     private void OnChanged() => InvokeAsync(StateHasChanged);

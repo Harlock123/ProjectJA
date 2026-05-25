@@ -16,7 +16,10 @@
 
 <PageTitle>Org users</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom="true">Org users</MudText>
+<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+    <MudText Typo="Typo.h4">Org users</MudText>
+    <HelpTooltip Text="Tenant-wide user administration. Toggle the Org admin switch to grant/revoke access to /invites, /audit, /admin/*, /system/versioning. The last-admin guard prevents demoting the only remaining org admin. The 2FA column lets you reset a non-admin user's two-factor (useful when they lose their phone) — admins must reset their own from Settings." />
+</MudStack>
 <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-4">
     Org administrators have access to invites, audit, email outbox, SSO settings,
     system info, and this page. <strong>Project-level roles are independent</strong> —

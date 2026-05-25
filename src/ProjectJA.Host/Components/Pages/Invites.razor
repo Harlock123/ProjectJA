@@ -10,7 +10,10 @@
 
 <PageTitle>Invites</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom="true">Invites</MudText>
+<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+    <MudText Typo="Typo.h4">Invites</MudText>
+    <HelpTooltip Text="Invite-only registration: enter an email, click Send, and the recipient gets a one-time link expiring in 7 days. Only the SHA-256 of the token is stored — the raw link only exists in the email and in the response on this page (copy/paste it as a backup channel). Revoke a pending invite to invalidate its link." />
+</MudStack>
 
 <MudGrid>
     <MudItem xs="12" md="5">

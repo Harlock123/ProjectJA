@@ -12,9 +12,12 @@
 
 <MudDialog>
     <TitleContent>
-        <MudText Typo="Typo.h6">
-            @(_loaded && _project is not null ? $"{_project.Key} — members" : "Project members")
-        </MudText>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.h6">
+                @(_loaded && _project is not null ? $"{_project.Key} — members" : "Project members")
+            </MudText>
+            <HelpTooltip Text="Project roles: Viewer = read-only · Member = full issue write (create/edit/move/assign/comment/attachments) · Admin = also manages members, settings, sprints, and workflow. Project Admin is distinct from Org Admin — being an Org Admin doesn't auto-grant project access." />
+        </MudStack>
     </TitleContent>
     <DialogContent>
         @if (!_loaded)

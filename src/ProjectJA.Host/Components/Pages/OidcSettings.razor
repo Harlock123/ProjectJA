@@ -6,7 +6,10 @@
 
 <PageTitle>OIDC settings</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom="true">OIDC settings</MudText>
+<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+    <MudText Typo="Typo.h4">OIDC settings</MudText>
+    <HelpTooltip Text="Per-tenant OpenID Connect single sign-on. Configure Authority (e.g. https://login.microsoftonline.com/tenantId/v2.0), ClientId, and ClientSecret from your IdP. When enabled, the Login page shows a 'Sign in with [DisplayName]' button. Auto-provision creates new ApplicationUser rows for unknown emails whose domain matches the allow-list — leave off unless you trust everyone at those domains. Restart required for scheme registration changes." />
+</MudStack>
 <MudAlert Severity="Severity.Info" Class="mb-4">
     Changes to OIDC config require an app restart before they take effect for sign-in.
     The current values are loaded from this tenant's database.

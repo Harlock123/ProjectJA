@@ -37,6 +37,7 @@ else
         <MudText Typo="Typo.h4">
             <span style="font-family:monospace;">@_project.Key</span> sprints
         </MudText>
+        <HelpTooltip Text="Sprints are time-boxed iterations. Lifecycle: Planned → Active → Completed (one-way). At most one sprint can be Active at a time per project. On Complete, any issue not in a Done-category state is moved back to the backlog and the carry-over count is recorded in the audit log." />
         <MudSpacer />
         @if (_isAdmin)
         {
@@ -193,7 +194,10 @@ else
     @if (_isAdmin)
     {
         <MudPaper Class="pa-4" Elevation="1">
-            <MudText Typo="Typo.h6" GutterBottom="true">Plan a sprint</MudText>
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+                <MudText Typo="Typo.h6">Plan a sprint</MudText>
+                <HelpTooltip Text="Creates a sprint in Planned state. Start + End dates are optional planning anchors — actual lifecycle is controlled by Start/Complete buttons on the sprint row, not by these dates. You can add issues to a Planned sprint before starting it via the drag-drop planner or the sprint dropdown on each issue." />
+            </MudStack>
             <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
                 A new sprint starts in <em>Planned</em>. Use <strong>Start</strong> on its row when you're ready
                 — only one sprint can be Active in a project at a time.

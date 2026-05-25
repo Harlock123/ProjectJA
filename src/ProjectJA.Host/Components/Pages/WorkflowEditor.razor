@@ -27,9 +27,12 @@ else
     <MudButton Href="@($"/projects/{ProjectId}")" Variant="Variant.Text"
                StartIcon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" Class="mb-2">Back to project</MudButton>
 
-    <MudText Typo="Typo.h4" GutterBottom="true">
-        <span style="font-family:monospace;">@_project.Key</span> workflow
-    </MudText>
+    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+        <MudText Typo="Typo.h4">
+            <span style="font-family:monospace;">@_project.Key</span> workflow
+        </MudText>
+        <HelpTooltip Text="A workflow defines the status pipeline for this project's issues. Drag states to reorder, edit names inline, and use the transition matrix below to control which state-to-state moves are allowed. Categories (Open / In progress / Done) drive sprint completion and the auto-bump-to-100%-on-Done behaviour, so set them carefully." />
+    </MudStack>
     <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
         Status pipeline for this project's issues. Each state has a <strong>Category</strong>
         (Open / In&nbsp;progress / Done) — that's what global logic like sprint completion uses
@@ -124,6 +127,7 @@ else
         <MudPaper Class="pa-4 mb-4" Elevation="1">
             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
                 <MudText Typo="Typo.h6">Allowed transitions</MudText>
+                <HelpTooltip Text="Each checkbox controls whether an issue can move from the row state to the column state. Same-state cells are always allowed (idempotent PATCHes need to no-op). Disallowed moves return 409 Conflict from the API and a warning toast on the board." />
                 <MudText Typo="Typo.caption" Color="Color.Default">
                     Row = from state, column = to state. @(_isAdmin ? "Uncheck to forbid a move." : "")
                 </MudText>
@@ -193,7 +197,10 @@ else
         @if (_isAdmin)
         {
             <MudPaper Class="pa-4" Elevation="1">
-                <MudText Typo="Typo.h6" GutterBottom="true">Add a state</MudText>
+                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+                    <MudText Typo="Typo.h6">Add a state</MudText>
+                    <HelpTooltip Text="New states are appended at the end and start with no allowed transitions — you'll need to enable them in the matrix above. Pick the Category carefully: Done-category states auto-bump PercentComplete to 100 when an issue lands in them." />
+                </MudStack>
                 <MudStack Row="true" Spacing="2" AlignItems="AlignItems.End">
                     <MudTextField Label="Name" @bind-Value="_newName" Variant="Variant.Outlined"
                                   Margin="Margin.Dense" MaxLength="200" />

@@ -32,9 +32,12 @@ else
     <MudButton Href="@($"/projects/{ProjectId}/sprints")" Variant="Variant.Text"
                StartIcon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" Class="mb-2">Back to sprints</MudButton>
 
-    <MudText Typo="Typo.h4" GutterBottom="true">
-        <span style="font-family:monospace;">@_project.Key</span> sprint planning
-    </MudText>
+    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+        <MudText Typo="Typo.h4">
+            <span style="font-family:monospace;">@_project.Key</span> sprint planning
+        </MudText>
+        <HelpTooltip Text="Drag issues between Backlog (left) and the selected sprint (right) to plan iterations. Only Planned and Active sprints accept assignments — Completed sprints are read-only. The same cards open the standard IssueEditDialog on double-click." />
+    </MudStack>
 
     @if (_assignableSprints.Count == 0)
     {

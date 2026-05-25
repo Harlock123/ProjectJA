@@ -134,10 +134,13 @@
 
     @* ------------------------------------------------------------ Security (2FA) *@
     <MudTabPanel Text="Security" Icon="@Icons.Material.Filled.Security">
-        <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-4">
-            Add a second factor to your sign-in using a TOTP authenticator app
-            (Microsoft Authenticator, Google Authenticator, 1Password, Authy, etc.).
-        </MudText>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+            <MudText Typo="Typo.body2" Color="Color.Default">
+                Add a second factor to your sign-in using a TOTP authenticator app
+                (Microsoft Authenticator, Google Authenticator, 1Password, Authy, etc.).
+            </MudText>
+            <HelpTooltip Text="TOTP (Time-based One-Time Password, RFC 6238) is the standard 30-second rotating-code protocol every authenticator app supports. Once enabled, sign-in becomes two-step: password → 6-digit code. Recovery codes are one-time bypasses for when you lose your device — save them somewhere safe." />
+        </MudStack>
 
         @if (_twoFactor == TwoFactorUiState.Loading)
         {
@@ -211,7 +214,10 @@
                     <MudAlert Severity="Severity.Success" Dense="true">
                         Two-factor authentication is <strong>now enabled</strong>.
                     </MudAlert>
-                    <MudText Typo="Typo.subtitle1" Style="font-weight:600;">Recovery codes</MudText>
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                        <MudText Typo="Typo.subtitle1" Style="font-weight:600;">Recovery codes</MudText>
+                        <HelpTooltip Text="These are one-time-use backup codes for signing in when you can't get to your authenticator (lost phone, app uninstalled). Each code works exactly once. Print them, save them in a password manager, anything but plaintext on the same device as the authenticator. You can regenerate the set later from this tab — that invalidates the old codes." />
+                    </MudStack>
                     <MudAlert Severity="Severity.Warning" Dense="true">
                         Save these codes somewhere safe — each one can be used <strong>once</strong>
                         to sign in if you lose access to your authenticator app. They will not be

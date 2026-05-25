@@ -26,9 +26,12 @@
 
 <MudDialog>
     <TitleContent>
-        <MudText Typo="Typo.h6">
-            @(_loaded && _issue is not null ? $"{_projectKey}-{_issue.Number}" : "Issue")
-        </MudText>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.h6">
+                @(_loaded && _issue is not null ? $"{_projectKey}-{_issue.Number}" : "Issue")
+            </MudText>
+            <HelpTooltip Text="Edit an issue's fields, attachments, blockers, and comments in one place. Save details persists field changes; attachments, blockers, and comments each persist immediately on action. Status moves obey the project's workflow transition matrix — disallowed moves return 409." />
+        </MudStack>
     </TitleContent>
     <DialogContent>
         @if (!_loaded)
