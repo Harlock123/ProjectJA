@@ -38,7 +38,10 @@ else
         <MudChip T="string" Color="@StatusColor(_state?.Category)" Size="Size.Small" Class="ml-2">@(_state?.Name ?? "—")</MudChip>
     </MudText>
     <MudPaper Class="pa-4 mb-4" Elevation="1">
-        <MudText Typo="Typo.h6" GutterBottom="true">Details</MudText>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+            <MudText Typo="Typo.h6">Details</MudText>
+            <HelpTooltip Text="The issue's core fields — title, type, assignee, schedule, progress. Changes persist when you click Save details. Start/End form the planned window; % Complete is independent and auto-jumps to 100 when you move into a Done-category state." />
+        </MudStack>
         @if (!_canWrite)
         {
             <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
@@ -138,7 +141,10 @@ else
     </MudPaper>
 
     <MudPaper Class="pa-4 mb-4" Elevation="1">
-        <MudText Typo="Typo.h6" GutterBottom="true">Blockers</MudText>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+            <MudText Typo="Typo.h6">Blockers</MudText>
+            <HelpTooltip Text="'Blocked by' = issues that must be done before this one can finish. 'Blocks' = issues that wait on this one. Adding a blocker checks for cycles (an issue can't transitively block itself)." />
+        </MudStack>
         <MudGrid Spacing="3">
             <MudItem xs="12" md="6">
                 <MudText Typo="Typo.subtitle2">Blocked by</MudText>

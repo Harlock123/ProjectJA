@@ -7,6 +7,7 @@
 @inject ThemeCatalog Catalog
 @inject ThemeState ThemeState
 @inject AvatarState AvatarState
+@inject TooltipState TooltipState
 @inject AuthenticationStateProvider Auth
 @inject IUserPreferences Preferences
 
@@ -138,6 +139,8 @@
             ThemeState.Set(Catalog.IsKnown(pref.ThemeKey) ? pref.ThemeKey : null, pref.Dark);
             var avatarKey = await Preferences.GetAvatarKeyAsync(userId, default);
             AvatarState.Set(avatarKey);
+            var tooltipsOn = await Preferences.GetTooltipsEnabledAsync(userId, default);
+            TooltipState.Set(tooltipsOn);
         }
     }
 

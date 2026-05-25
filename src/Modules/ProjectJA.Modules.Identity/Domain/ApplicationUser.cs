@@ -27,4 +27,11 @@ public sealed class ApplicationUser : IdentityUser<Guid>
 
     /// <summary>Selected avatar preset key (see Host AvatarCatalog). Null = fall back to initials.</summary>
     public string? AvatarKey { get; set; }
+
+    /// <summary>Whether the user wants helper / informational tooltips to
+    /// appear on hover throughout the UI. Defaults to true (helpful for new
+    /// users); experienced users can turn it off from Settings to reduce
+    /// visual chrome. The setting is read at MainLayout firstRender and
+    /// republished via the circuit-scoped <c>TooltipState</c> on toggle.</summary>
+    public bool TooltipsEnabled { get; set; } = true;
 }

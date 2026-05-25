@@ -44,4 +44,24 @@ internal sealed class UserPreferences(DbContext db) : IUserPreferences
         user.AvatarKey = avatarKey;
         await db.SaveChangesAsync(ct);
     }
+
+    public async Task<bool> GetTooltipsEnabledAsync(Guid userId, CancellationToken ct)
+    {
+        // Default true if the row exists but the value is null-ish from a
+        // legacy seeded row — the column default is also true at the DB level
+        // so this is just defense-in-depth.
+        var row = await db.Set<ApplicationUser>().AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => (bool?)u.TooltipsEnabled)
+            .FirstOrDefaultAsync(ct);
+        return row ?? true;
+    }
+
+    public async Task SetTooltipsEnabledAsync(Guid userId, bool enabled, CancellationToken ct)
+    {
+        var user = await db.Set<ApplicationUser>().FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null) return;
+        user.TooltipsEnabled = enabled;
+        await db.SaveChangesAsync(ct);
+    }
 }

@@ -11,4 +11,6 @@ public interface IUserPreferences
     Task SetThemeAsync(Guid userId, string? themeKey, bool dark, CancellationToken ct);
     Task<string?> GetAvatarKeyAsync(Guid userId, CancellationToken ct);
     Task SetAvatarKeyAsync(Guid userId, string? avatarKey, CancellationToken ct);
+    Task<bool> GetTooltipsEnabledAsync(Guid userId, CancellationToken ct);
+    Task SetTooltipsEnabledAsync(Guid userId, bool enabled, CancellationToken ct);
 }

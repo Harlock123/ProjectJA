@@ -13,6 +13,7 @@
 @inject AvatarCatalog Avatars
 @inject ThemeState ThemeState
 @inject AvatarState AvatarState
+@inject TooltipState TooltipState
 @inject IUserPreferences Preferences
 @inject UserManager<ApplicationUser> Users
 @inject AuthenticationStateProvider Auth
@@ -21,7 +22,10 @@
 
 <PageTitle>Settings</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom="true">Settings</MudText>
+<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+    <MudText Typo="Typo.h4">Settings</MudText>
+    <HelpTooltip Text="Account-scoped preferences: theme, avatar, password, two-factor authentication, and whether informational tooltips appear throughout the app." />
+</MudStack>
 
 <MudTabs Elevation="0" Rounded="true" KeepPanelsAlive="true">
     @* ------------------------------------------------------------ Appearance *@
@@ -31,8 +35,18 @@
         </MudText>
 
         <MudPaper Class="pa-4 mb-4" Elevation="1">
-            <MudSwitch T="bool" Value="_isDark" ValueChanged="OnDarkChangedAsync"
-                       Label="Dark mode" Color="Color.Primary" />
+            <MudStack Spacing="2">
+                <MudSwitch T="bool" Value="_isDark" ValueChanged="OnDarkChangedAsync"
+                           Label="Dark mode" Color="Color.Primary" />
+                <MudSwitch T="bool" Value="_tooltipsEnabled" ValueChanged="OnTooltipsChangedAsync"
+                           Label="Show helper tooltips"
+                           Color="Color.Primary" />
+                <MudText Typo="Typo.caption" Color="Color.Default">
+                    When on, small <strong>?</strong> icons appear next to fields with extra
+                    context. Hover one for a description. Turn off to declutter the UI once
+                    you're familiar with the app.
+                </MudText>
+            </MudStack>
         </MudPaper>
 
         <MudGrid Spacing="3">
@@ -295,6 +309,7 @@
     // ---- Appearance ----
     private string _selectedThemeKey = ThemeCatalog.DefaultKey;
     private bool _isDark;
+    private bool _tooltipsEnabled = true;
     private Guid _userId;
 
     // ---- Avatar ----
@@ -339,6 +354,7 @@
         Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _userId);
         // Avatar lives outside ThemeState — read it once on init.
         _selectedAvatarKey = await Preferences.GetAvatarKeyAsync(_userId, default);
+        _tooltipsEnabled = TooltipState.Enabled;
 
         // 2FA: NotEnrolled / Enrolled is derived from Identity's TwoFactorEnabled
         // flag. Enrolling / ShowingRecoveryCodes are transient UI states the user
@@ -375,6 +391,17 @@
     {
         _isDark = isDark;
         await ApplyAndSaveThemeAsync();
+    }
+
+    private async Task OnTooltipsChangedAsync(bool enabled)
+    {
+        _tooltipsEnabled = enabled;
+        // Live update first so the toggle visibly changes the page; the DB
+        // write follows. Cheap enough that a failure here is acceptable —
+        // worst case the next sign-in re-reads the old preference.
+        TooltipState.Set(enabled);
+        await Preferences.SetTooltipsEnabledAsync(_userId, enabled, default);
+        Snackbar.Add(enabled ? "Tooltips on." : "Tooltips off.", Severity.Success);
     }
 
     private async Task ApplyAndSaveThemeAsync()
