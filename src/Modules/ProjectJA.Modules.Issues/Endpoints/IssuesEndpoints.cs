@@ -610,6 +610,11 @@ internal static class IssuesEndpoints
 
         app.MapGet("/api/projects/{projectId:guid}/export.xlsx", async (
             Guid projectId,
+            [FromQuery] IssueType? type,
+            [FromQuery] Guid? status,
+            [FromQuery] IssuePriority? priority,
+            [FromQuery] Guid? assigneeId,
+            [FromQuery] string? title,
             [FromServices] IIssueExportService export,
             [FromServices] IProjectQueries projects,
             HttpContext http,
@@ -617,7 +622,8 @@ internal static class IssuesEndpoints
         {
             var auth = await ProjectAccess.RequireAsync(http, projects, projectId, ProjectRole.Viewer, ct);
             if (auth.Denied) return auth.Failure!;
-            var bytes = await export.ExportProjectAsync(projectId, ct);
+            var filter = new IssueExportFilter(type, status, priority, assigneeId, title);
+            var bytes = await export.ExportProjectAsync(projectId, filter.IsActive ? filter : null, ct);
             if (bytes is null) return Results.NotFound();
             var summary = await projects.GetSummaryAsync(projectId, ct);
             var fileName = $"{summary?.Key ?? "project"}-issues.xlsx";

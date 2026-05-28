@@ -17,6 +17,7 @@
 @inject ISprintQueries SprintsQueries
 @inject IWorkflowQueries WorkflowsQueries
 @inject IDialogService DialogService
+@inject IJSRuntime JS
 @inject ProjectJA.SharedKernel.Notifications.INotificationService Notifications
 
 <PageTitle>@(_project?.Name ?? "Project")</PageTitle>
@@ -40,9 +41,8 @@ else
                    StartIcon="@Icons.Material.Filled.Loop" Class="mr-2">Sprints</MudButton>
         <MudButton Href="@($"/projects/{ProjectId}/board")" Variant="Variant.Outlined" Color="Color.Primary"
                    StartIcon="@Icons.Material.Filled.ViewKanban" Class="mr-2">Board</MudButton>
-        <MudButton Href="@($"/api/projects/{ProjectId}/export.xlsx")" Variant="Variant.Outlined"
-                   Color="Color.Primary" StartIcon="@Icons.Material.Filled.FileDownload"
-                   Target="_blank" rel="noopener">Export xlsx</MudButton>
+        <MudButton OnClick="ExportXlsxAsync" Variant="Variant.Outlined"
+                   Color="Color.Primary" StartIcon="@Icons.Material.Filled.FileDownload">Export xlsx</MudButton>
     </MudStack>
 
     @if (!string.IsNullOrWhiteSpace(_project.Description))
@@ -346,6 +346,41 @@ else
     private void ClearFilter()
     {
         _filter = new IssueFilterDialog.IssueFilter();
+    }
+
+    private async Task ExportXlsxAsync()
+    {
+        var baseUrl = $"/api/projects/{ProjectId}/export.xlsx";
+        if (!_filter.IsActive)
+        {
+            await JS.InvokeVoidAsync("open", baseUrl, "_blank");
+            return;
+        }
+
+        // ShowMessageBox returns bool? — true=Yes, false=No, null=Cancel.
+        var choice = await DialogService.ShowMessageBoxAsync(
+            title: "Export to Excel",
+            message: "A filter is currently applied to the issues list. " +
+                     "Export only the filtered issues, or all issues in the project?",
+            yesText: "Export filtered",
+            noText: "Export all",
+            cancelText: "Cancel");
+        if (choice is null) return;
+
+        var url = choice == true ? baseUrl + BuildFilterQuery(_filter) : baseUrl;
+        await JS.InvokeVoidAsync("open", url, "_blank");
+    }
+
+    private static string BuildFilterQuery(IssueFilterDialog.IssueFilter f)
+    {
+        var parts = new List<string>(5);
+        if (f.Type is { } t) parts.Add($"type={t}");
+        if (f.WorkflowStateId is { } s) parts.Add($"status={s}");
+        if (f.Priority is { } p) parts.Add($"priority={p}");
+        if (f.AssigneeId is { } a) parts.Add($"assigneeId={a}");
+        if (!string.IsNullOrWhiteSpace(f.TitleContains))
+            parts.Add($"title={Uri.EscapeDataString(f.TitleContains!)}");
+        return parts.Count == 0 ? "" : "?" + string.Join("&", parts);
     }
 
     private async Task OpenMembersAsync()

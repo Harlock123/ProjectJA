@@ -16,15 +16,38 @@ internal sealed class IssueExportService(
     IWorkflowQueries workflows,
     IUserQueries users) : IIssueExportService
 {
-    public async Task<byte[]?> ExportProjectAsync(Guid projectId, CancellationToken ct)
+    public Task<byte[]?> ExportProjectAsync(Guid projectId, CancellationToken ct)
+        => ExportProjectAsync(projectId, filter: null, ct);
+
+    public async Task<byte[]?> ExportProjectAsync(Guid projectId, IssueExportFilter? filter, CancellationToken ct)
     {
         var project = await projects.GetSummaryAsync(projectId, ct);
         if (project is null) return null;
 
-        var issues = await db.Set<Issue>().AsNoTracking()
-            .Where(i => i.ProjectId == projectId)
-            .OrderBy(i => i.Number)
-            .ToListAsync(ct);
+        var query = db.Set<Issue>().AsNoTracking()
+            .Where(i => i.ProjectId == projectId);
+
+        if (filter is not null)
+        {
+            if (filter.Type is { } t) query = query.Where(i => i.Type == t);
+            if (filter.WorkflowStateId is { } s) query = query.Where(i => i.WorkflowStateId == s);
+            if (filter.Priority is { } p) query = query.Where(i => i.Priority == p);
+            if (filter.AssigneeId is { } a)
+            {
+                query = a == Guid.Empty
+                    ? query.Where(i => i.AssigneeId == null)
+                    : query.Where(i => i.AssigneeId == a);
+            }
+            if (!string.IsNullOrWhiteSpace(filter.TitleContains))
+            {
+                var needle = filter.TitleContains!.Trim();
+                // EF.Functions.ILike keeps the case-insensitive match server-side
+                // on Postgres; mirrors the in-page filter's OrdinalIgnoreCase.
+                query = query.Where(i => EF.Functions.ILike(i.Title, $"%{needle}%"));
+            }
+        }
+
+        var issues = await query.OrderBy(i => i.Number).ToListAsync(ct);
 
         var workflow = await workflows.GetForProjectAsync(projectId, ct);
         var stateNames = workflow?.States.ToDictionary(s => s.Id, s => s.Name)
