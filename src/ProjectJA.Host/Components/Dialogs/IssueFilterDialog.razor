@@ -1,0 +1,118 @@
+@using ProjectJA.Modules.Identity.Contracts
+@using ProjectJA.Modules.Issues.Domain
+@using ProjectJA.Modules.Workflows.Contracts
+
+<MudDialog>
+    <TitleContent>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudText Typo="Typo.h6">Filter issues</MudText>
+            <HelpTooltip Text="Restrict the issues list to rows matching every field you set. Leave a field blank to ignore it. Title match is a case-insensitive 'contains'. Use Clear filter to remove all conditions in one click." />
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="3" Style="min-width:26rem;">
+            <MudSelect T="IssueType?" Label="Type" @bind-Value="_draft.Type"
+                       Variant="Variant.Outlined" Dense="true" Clearable="true">
+                @foreach (var t in Enum.GetValues<IssueType>())
+                {
+                    <MudSelectItem T="IssueType?" Value="@((IssueType?)t)">@t</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="Guid?" Label="Status" @bind-Value="_draft.WorkflowStateId"
+                       Variant="Variant.Outlined" Dense="true" Clearable="true"
+                       ToStringFunc="StateName">
+                @foreach (var s in States.OrderBy(s => s.Order))
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)s.Id)">@s.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="IssuePriority?" Label="Priority" @bind-Value="_draft.Priority"
+                       Variant="Variant.Outlined" Dense="true" Clearable="true">
+                @foreach (var p in Enum.GetValues<IssuePriority>())
+                {
+                    <MudSelectItem T="IssuePriority?" Value="@((IssuePriority?)p)">@p</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="Guid?" Label="Assignee" @bind-Value="_draft.AssigneeId"
+                       Variant="Variant.Outlined" Dense="true" Clearable="true"
+                       ToStringFunc="AssigneeName">
+                <MudSelectItem T="Guid?" Value="@((Guid?)Guid.Empty)">(Unassigned)</MudSelectItem>
+                @foreach (var u in Users)
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)u.Id)">
+                        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                            <UserAvatar AvatarKey="@u.AvatarKey" DisplayName="@u.DisplayName" Size="Size.Small" />
+                            <span>@u.DisplayName</span>
+                        </MudStack>
+                    </MudSelectItem>
+                }
+            </MudSelect>
+            <MudTextField Label="Title contains" @bind-Value="_draft.TitleContains"
+                          Variant="Variant.Outlined" Clearable="true"
+                          HelperText="Case-insensitive substring match." />
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="ClearAndClose" Color="Color.Default"
+                   StartIcon="@Icons.Material.Filled.Clear">Clear filter</MudButton>
+        <MudSpacer />
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="Apply" Variant="Variant.Filled" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.FilterAlt">Apply</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public IssueFilter Current { get; set; } = new();
+    [Parameter] public IReadOnlyList<WorkflowStateView> States { get; set; } = Array.Empty<WorkflowStateView>();
+    [Parameter] public IReadOnlyList<UserSummary> Users { get; set; } = Array.Empty<UserSummary>();
+
+    private IssueFilter _draft = new();
+
+    protected override void OnInitialized()
+    {
+        _draft = Current.Clone();
+    }
+
+    private string StateName(Guid? id) =>
+        id is null ? "" : (States.FirstOrDefault(s => s.Id == id)?.Name ?? "");
+
+    private string AssigneeName(Guid? id)
+    {
+        if (id is null) return "";
+        if (id == Guid.Empty) return "(Unassigned)";
+        return Users.FirstOrDefault(u => u.Id == id)?.DisplayName ?? "";
+    }
+
+    private void Apply() => MudDialog.Close(DialogResult.Ok(_draft));
+    private void Cancel() => MudDialog.Cancel();
+    private void ClearAndClose() => MudDialog.Close(DialogResult.Ok(new IssueFilter()));
+
+    public sealed class IssueFilter
+    {
+        public IssueType? Type { get; set; }
+        public Guid? WorkflowStateId { get; set; }
+        public IssuePriority? Priority { get; set; }
+        // Guid.Empty is the "(Unassigned)" sentinel; any other Guid is a specific user.
+        public Guid? AssigneeId { get; set; }
+        public string? TitleContains { get; set; }
+
+        public bool IsActive =>
+            Type is not null
+            || WorkflowStateId is not null
+            || Priority is not null
+            || AssigneeId is not null
+            || !string.IsNullOrWhiteSpace(TitleContains);
+
+        public IssueFilter Clone() => new()
+        {
+            Type = Type,
+            WorkflowStateId = WorkflowStateId,
+            Priority = Priority,
+            AssigneeId = AssigneeId,
+            TitleContains = TitleContains,
+        };
+    }
+}

@@ -56,13 +56,52 @@ else
         <MudItem xs="12" md="8">
             <MudPaper Class="pa-4" Elevation="1">
                 <MudText Typo="Typo.h6" GutterBottom="true">Issues</MudText>
+
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap" Class="mb-3">
+                    <MudButton OnClick="OpenFilterAsync" Variant="Variant.Outlined" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.FilterAlt" Size="Size.Small">Filter</MudButton>
+                    @if (_filter.IsActive)
+                    {
+                        <MudButton OnClick="ClearFilter" Variant="Variant.Text" Color="Color.Default"
+                                   StartIcon="@Icons.Material.Filled.Clear" Size="Size.Small">Clear filter</MudButton>
+                        <MudText Typo="Typo.body2" Color="Color.Default">Filter applied:</MudText>
+                        @if (_filter.Type is { } ft)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">Type: @ft</MudChip>
+                        }
+                        @if (_filter.WorkflowStateId is { } fsid)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">Status: @(_stateNames.GetValueOrDefault(fsid, "?"))</MudChip>
+                        }
+                        @if (_filter.Priority is { } fp)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">Priority: @fp</MudChip>
+                        }
+                        @if (_filter.AssigneeId is { } fa)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">Assignee: @AssigneeChipLabel(fa)</MudChip>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(_filter.TitleContains))
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">Title: "@_filter.TitleContains"</MudChip>
+                        }
+                    }
+                </MudStack>
+
+                @{
+                    var filteredIssues = ApplyFilter(_issues).ToList();
+                }
                 @if (_issues is null || _issues.Count == 0)
                 {
                     <MudText Color="Color.Default">No issues yet.</MudText>
                 }
+                else if (filteredIssues.Count == 0)
+                {
+                    <MudText Color="Color.Default">No issues match the current filter.</MudText>
+                }
                 else
                 {
-                    <MudTable Items="_issues" Hover="true" Dense="true">
+                    <MudTable Items="filteredIssues" Hover="true" Dense="true">
                         <HeaderContent>
                             <MudTh>Key</MudTh>
                             <MudTh>Type</MudTh>
@@ -226,6 +265,7 @@ else
     private bool _isAdmin;
     private Draft _draft = new();
     private string? _error;
+    private IssueFilterDialog.IssueFilter _filter = new();
 
     private string NullableUserToString(Guid? id) =>
         id is null ? "" : (_users.FirstOrDefault(u => u.Id == id)?.DisplayName ?? "");
@@ -262,6 +302,50 @@ else
         _stateNames = _workflow?.States.ToDictionary(s => s.Id, s => s.Name) ?? new();
         _sprints = await SprintsQueries.ListForProjectAsync(ProjectId, default);
         _sprintNames = _sprints.ToDictionary(s => s.Id, s => s.Name);
+    }
+
+    private IEnumerable<Issue> ApplyFilter(IEnumerable<Issue>? source)
+    {
+        if (source is null) return Array.Empty<Issue>();
+        if (!_filter.IsActive) return source;
+        return source.Where(i =>
+            (_filter.Type is not { } t || i.Type == t)
+            && (_filter.WorkflowStateId is not { } s || i.WorkflowStateId == s)
+            && (_filter.Priority is not { } p || i.Priority == p)
+            && (_filter.AssigneeId is not { } a
+                || (a == Guid.Empty ? i.AssigneeId is null : i.AssigneeId == a))
+            && (string.IsNullOrWhiteSpace(_filter.TitleContains)
+                || (i.Title ?? "").Contains(_filter.TitleContains!, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private string AssigneeChipLabel(Guid id)
+    {
+        if (id == Guid.Empty) return "(Unassigned)";
+        return _users.FirstOrDefault(u => u.Id == id)?.DisplayName ?? "?";
+    }
+
+    private async Task OpenFilterAsync()
+    {
+        var parameters = new DialogParameters<IssueFilterDialog>
+        {
+            { x => x.Current, _filter },
+            { x => x.States, _workflow?.States ?? Array.Empty<WorkflowStateView>() },
+            { x => x.Users, _users },
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<IssueFilterDialog>("Filter issues", parameters, options);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled) return;
+        if (result.Data is IssueFilterDialog.IssueFilter f)
+        {
+            _filter = f;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void ClearFilter()
+    {
+        _filter = new IssueFilterDialog.IssueFilter();
     }
 
     private async Task OpenMembersAsync()
