@@ -43,6 +43,11 @@ else
                    StartIcon="@Icons.Material.Filled.ViewKanban" Class="mr-2">Board</MudButton>
         <MudButton OnClick="ExportXlsxAsync" Variant="Variant.Outlined"
                    Color="Color.Primary" StartIcon="@Icons.Material.Filled.FileDownload">Export xlsx</MudButton>
+        @if (_isAdmin)
+        {
+            <MudButton OnClick="OpenImportAsync" Variant="Variant.Outlined" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Upload" Class="ml-2">Import xlsx</MudButton>
+        }
     </MudStack>
 
     @if (!string.IsNullOrWhiteSpace(_project.Description))
@@ -369,6 +374,17 @@ else
 
         var url = choice == true ? baseUrl + BuildFilterQuery(_filter) : baseUrl;
         await JS.InvokeVoidAsync("open", url, "_blank");
+    }
+
+    private async Task OpenImportAsync()
+    {
+        var parameters = new DialogParameters<IssueImportDialog> { { x => x.LockedToProjectId, ProjectId } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<IssueImportDialog>("Import issues from xlsx", parameters, options);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled) return;
+        await ReloadAsync();
+        await InvokeAsync(StateHasChanged);
     }
 
     private static string BuildFilterQuery(IssueFilterDialog.IssueFilter f)

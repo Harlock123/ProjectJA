@@ -1,0 +1,66 @@
+@inject IProjectDeleteService Deleter
+@using ProjectJA.Modules.Projects.Contracts
+
+<MudDialog>
+    <TitleContent>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudIcon Icon="@Icons.Material.Filled.Warning" Color="Color.Error" />
+            <MudText Typo="Typo.h6">Delete project</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudAlert Severity="Severity.Error" Dense="true">
+                This permanently removes <strong>@ProjectKey — @ProjectName</strong> and
+                every issue, comment, attachment record, blocker link, sprint, and
+                workflow tied to it. This cannot be undone.
+            </MudAlert>
+            <MudText Typo="Typo.body2" Color="Color.Default">
+                Type the project key <code>@ProjectKey</code> below to confirm.
+            </MudText>
+            <MudTextField @bind-Value="_typed" @bind-Value:after="StateHasChanged"
+                          Variant="Variant.Outlined" Label="Project key"
+                          Immediate="true" />
+            @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="ConfirmAsync" Variant="Variant.Filled" Color="Color.Error"
+                   StartIcon="@Icons.Material.Filled.Delete"
+                   Disabled="@(!_busy && !string.Equals(_typed.Trim(), ProjectKey, StringComparison.Ordinal) || _busy)">
+            Delete forever
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public string ProjectKey { get; set; } = "";
+    [Parameter] public string ProjectName { get; set; } = "";
+
+    private string _typed = "";
+    private string? _error;
+    private bool _busy;
+
+    private async Task ConfirmAsync()
+    {
+        _error = null;
+        _busy = true;
+        StateHasChanged();
+        try
+        {
+            var ok = await Deleter.DeleteAsync(ProjectId, default);
+            if (!ok) { _error = "Project not found — it may have been deleted already."; return; }
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            _error = $"Delete failed: {ex.Message}";
+        }
+        finally { _busy = false; }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

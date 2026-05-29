@@ -2,16 +2,23 @@
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @rendermode InteractiveServer
 @using System.Security.Claims
+@using ProjectJA.Modules.Projects.Domain
 @using ProjectJA.Modules.Workflows.Contracts
 @inject AppDbContext Db
 @inject IClock Clock
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider Auth
 @inject IWorkflowSeeder WorkflowSeeder
+@inject IDialogService DialogService
 
 <PageTitle>Projects</PageTitle>
 
-<MudText Typo="Typo.h4" GutterBottom="true">Projects</MudText>
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+    <MudText Typo="Typo.h4">Projects</MudText>
+    <MudSpacer />
+    <MudButton OnClick="OpenImportAsync" Variant="Variant.Outlined" Color="Color.Primary"
+               StartIcon="@Icons.Material.Filled.Upload">Import xlsx</MudButton>
+</MudStack>
 
 @if (Denied is not null)
 {
@@ -38,14 +45,22 @@
                         <MudTh>Key</MudTh>
                         <MudTh>Name</MudTh>
                         <MudTh>Created</MudTh>
-                        <MudTh></MudTh>
+                        <MudTh Style="width:9rem;"></MudTh>
                     </HeaderContent>
                     <RowTemplate>
                         <MudTd><MudText Typo="Typo.body2" Style="font-family:monospace;">@context.Key</MudText></MudTd>
                         <MudTd>@context.Name</MudTd>
                         <MudTd><MudText Typo="Typo.body2" Color="Color.Default">@context.CreatedAt.ToString("yyyy-MM-dd")</MudText></MudTd>
                         <MudTd>
-                            <MudButton Href="@($"/projects/{context.Id}")" Variant="Variant.Text" Color="Color.Primary" Size="Size.Small">Open</MudButton>
+                            <MudStack Row="true" Spacing="0" AlignItems="AlignItems.Center">
+                                <MudButton Href="@($"/projects/{context.Id}")" Variant="Variant.Text" Color="Color.Primary" Size="Size.Small">Open</MudButton>
+                                @if (IsAdminOf(context))
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                                                   title="Delete project"
+                                                   OnClick="@(() => OpenDeleteAsync(context))" />
+                                }
+                            </MudStack>
                         </MudTd>
                     </RowTemplate>
                 </MudTable>
@@ -102,6 +117,7 @@
         Db.ChangeTracker.Clear();
         // Only projects the current user is a member of.
         _projects = await Db.Projects.AsNoTracking()
+            .Include(p => p.Members)
             .Where(p => p.Members.Any(m => m.UserId == _currentUserId))
             .OrderBy(p => p.Key)
             .ToListAsync();
@@ -128,6 +144,33 @@
         await WorkflowSeeder.EnsureDefaultForProjectAsync(p.Id, Clock.UtcNow, default);
         _draft = new();
         await ReloadAsync();
+    }
+
+    private bool IsAdminOf(Project p) =>
+        p.Members.Any(m => m.UserId == _currentUserId && m.Role == ProjectRole.Admin);
+
+    private async Task OpenDeleteAsync(Project project)
+    {
+        var parameters = new DialogParameters<ProjectJA.Host.Components.Dialogs.DeleteProjectDialog>
+        {
+            { x => x.ProjectId, project.Id },
+            { x => x.ProjectKey, project.Key },
+            { x => x.ProjectName, project.Name },
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<ProjectJA.Host.Components.Dialogs.DeleteProjectDialog>(
+            "Delete project", parameters, options);
+        var result = await dialog.Result;
+        if (result is not null && !result.Canceled) await ReloadAsync();
+    }
+
+    private async Task OpenImportAsync()
+    {
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<ProjectJA.Host.Components.Dialogs.IssueImportDialog>(
+            "Import issues from xlsx", options);
+        var result = await dialog.Result;
+        if (result is not null && !result.Canceled) await ReloadAsync();
     }
 
     private sealed class Draft

@@ -14,6 +14,7 @@ public static class ProjectsModule
     {
         services.AddScoped<IProjectQueries, ProjectQueries>();
         services.AddScoped<ISprintQueries, SprintQueries>();
+        services.AddScoped<IProjectDeleteService, ProjectDeleteService>();
         return services;
     }
 

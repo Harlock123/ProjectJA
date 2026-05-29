@@ -1,0 +1,448 @@
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Forms
+@using ProjectJA.Modules.Issues.Contracts
+@using ProjectJA.Modules.Issues.Domain
+@using ProjectJA.Modules.Projects.Contracts
+@using ProjectJA.Modules.Projects.Domain
+@using ProjectJA.Modules.Workflows.Contracts
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IIssueImportService Importer
+@inject IClock Clock
+@inject IWorkflowSeeder WorkflowSeeder
+@inject IProjectQueries Projects
+@inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
+
+<MudDialog Style="min-width:42rem;">
+    <TitleContent>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudIcon Icon="@Icons.Material.Filled.Upload" />
+            <MudText Typo="Typo.h6">@StageTitle()</MudText>
+            <HelpTooltip Text="Upload an MS-Project-style xlsx. Column B (WBS) drives the parent/child blocker tree, C is the title, E/F are start/finish dates, G is % complete, L becomes a comment. The dialog parses and previews everything before any rows are written." />
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        @switch (_stage)
+        {
+            case Stage.Source:
+                <MudStack Spacing="3">
+                    <MudText Typo="Typo.body2" Color="Color.Default">
+                        Upload an Excel workbook exported from Microsoft Project (or a sheet built to the same shape).
+                        Required columns in row 1: <strong>WBS</strong> or <strong>Task Name</strong>. Optional: Start, Finish, % Complete, Notes.
+                    </MudText>
+                    <MudFileUpload T="IBrowserFile" FilesChanged="OnFilePicked"
+                                   Accept=".xlsx" MaximumFileCount="1" Hidden="true">
+                        <CustomContent Context="ctx">
+                            <MudButton OnClick="@ctx.OpenFilePickerAsync"
+                                       Variant="Variant.Outlined" Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.AttachFile">
+                                @(_file is null ? "Choose .xlsx file" : _file.Name)
+                            </MudButton>
+                        </CustomContent>
+                    </MudFileUpload>
+
+                    <MudDivider />
+
+                    <MudText Typo="Typo.subtitle2">Where should the rows go?</MudText>
+                    <MudRadioGroup T="TargetMode" @bind-Value="_targetMode">
+                        <MudRadio T="TargetMode" Value="TargetMode.Existing" Color="Color.Primary"
+                                  Disabled="@(LockedToProjectId is not null)">
+                            Existing project
+                        </MudRadio>
+                        <MudRadio T="TargetMode" Value="TargetMode.New" Color="Color.Primary"
+                                  Disabled="@(LockedToProjectId is not null)">
+                            Create a new project
+                        </MudRadio>
+                    </MudRadioGroup>
+
+                    @if (_targetMode == TargetMode.Existing)
+                    {
+                        @if (LockedToProjectId is not null)
+                        {
+                            <MudAlert Severity="Severity.Info" Dense="true">
+                                Importing into <strong>@_lockedProjectLabel</strong> (the project this dialog was opened from).
+                            </MudAlert>
+                        }
+                        else
+                        {
+                            <MudSelect T="Guid?" Label="Project" @bind-Value="_existingProjectId"
+                                       Variant="Variant.Outlined" Dense="true"
+                                       ToStringFunc="ProjectLabel">
+                                @foreach (var p in _adminProjects)
+                                {
+                                    <MudSelectItem T="Guid?" Value="@((Guid?)p.Id)">@p.Key — @p.Name</MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudText Typo="Typo.caption" Color="Color.Default">
+                                Only shows projects where you're an Admin (import creates issues + links on your behalf).
+                            </MudText>
+                        }
+                    }
+                    else
+                    {
+                        <MudStack Row="true" Spacing="2">
+                            <MudTextField Label="Key" @bind-Value="_newKey" Variant="Variant.Outlined"
+                                          Required="true" MaxLength="16" Counter="8"
+                                          HelperText="Short uppercase code (e.g. PLAN, MKTG)." />
+                            <MudTextField Label="Name" @bind-Value="_newName" Variant="Variant.Outlined"
+                                          Required="true"
+                                          HelperText="Human-readable project name." />
+                        </MudStack>
+                    }
+
+                    @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
+                </MudStack>
+                break;
+
+            case Stage.Preview:
+                <MudStack Spacing="3">
+                    <MudPaper Class="pa-3" Outlined="true">
+                        <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                            @RenderStat("Issues", _plan!.RowCount)
+                            @RenderStat("Blocker links", _plan!.LinkCount)
+                            @RenderStat("Dated", _plan!.DatedCount)
+                            @RenderStat("100% complete", _plan!.CompletedCount)
+                            @RenderStat("Comments", _plan!.CommentCount)
+                            @RenderStat("Warnings", _plan!.Warnings.Count, _plan!.Warnings.Count > 0 ? Color.Warning : Color.Default)
+                        </MudStack>
+                        <MudText Typo="Typo.body2" Color="Color.Default" Class="mt-2">
+                            Target: <strong>@TargetSummary()</strong>
+                        </MudText>
+                    </MudPaper>
+
+                    @if (_plan!.Warnings.Count > 0)
+                    {
+                        <MudExpansionPanels>
+                            <MudExpansionPanel Text="@($"Warnings ({_plan!.Warnings.Count})")">
+                                <MudList T="string" Dense="true">
+                                    @foreach (var w in _plan!.Warnings.Take(50))
+                                    {
+                                        <MudListItem T="string" Value="w" Icon="@Icons.Material.Filled.Warning">
+                                            <MudText Typo="Typo.body2">@w</MudText>
+                                        </MudListItem>
+                                    }
+                                    @if (_plan!.Warnings.Count > 50)
+                                    {
+                                        <MudListItem T="string" Value="@("…")">
+                                            <MudText Typo="Typo.caption" Color="Color.Default">
+                                                …and @(_plan!.Warnings.Count - 50) more (only the first 50 shown).
+                                            </MudText>
+                                        </MudListItem>
+                                    }
+                                </MudList>
+                            </MudExpansionPanel>
+                        </MudExpansionPanels>
+                    }
+
+                    <div style="max-height:30vh;overflow:auto;">
+                        <MudTable Items="_plan!.Issues.Take(200)" Hover="true" Dense="true" FixedHeader="true">
+                            <HeaderContent>
+                                <MudTh Style="width:5rem;">WBS</MudTh>
+                                <MudTh Style="width:5rem;">Type</MudTh>
+                                <MudTh>Title</MudTh>
+                                <MudTh Style="width:6rem;">Start</MudTh>
+                                <MudTh Style="width:6rem;">Finish</MudTh>
+                                <MudTh Style="width:4rem;">%</MudTh>
+                                <MudTh Style="width:3rem;"></MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd style="font-family:monospace;">@context.Wbs</MudTd>
+                                <MudTd><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@context.SuggestedType</MudChip></MudTd>
+                                <MudTd>@context.Title</MudTd>
+                                <MudTd>@(context.StartDate?.ToString("yyyy-MM-dd") ?? "—")</MudTd>
+                                <MudTd>@(context.EndDate?.ToString("yyyy-MM-dd") ?? "—")</MudTd>
+                                <MudTd>@context.PercentComplete</MudTd>
+                                <MudTd>
+                                    @if (!string.IsNullOrWhiteSpace(context.Note))
+                                    {
+                                        <MudTooltip Text="@context.Note">
+                                            <MudIcon Icon="@Icons.Material.Filled.Comment" Size="Size.Small" Color="Color.Default" />
+                                        </MudTooltip>
+                                    }
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                        @if (_plan!.Issues.Count > 200)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Default" Class="mt-1">
+                                Showing first 200 of @_plan!.Issues.Count rows. All rows will be imported.
+                            </MudText>
+                        }
+                    </div>
+
+                    @if (_error is not null) { <MudAlert Severity="Severity.Error">@_error</MudAlert> }
+                </MudStack>
+                break;
+
+            case Stage.Importing:
+                <MudStack Spacing="3" AlignItems="AlignItems.Center" Class="pa-6">
+                    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+                    <MudText>Importing @_plan!.RowCount issues…</MudText>
+                </MudStack>
+                break;
+
+            case Stage.Done:
+                <MudStack Spacing="3">
+                    <MudAlert Severity="Severity.Success">
+                        Imported <strong>@_result!.IssuesCreated</strong> issues,
+                        <strong>@_result!.LinksCreated</strong> blocker links,
+                        <strong>@_result!.CommentsAdded</strong> comments
+                        into <strong>@_resolvedProjectKey</strong>.
+                    </MudAlert>
+                    <MudText Typo="Typo.body2" Color="Color.Default">
+                        Every imported issue carries the label <code>@_result!.BatchLabel</code> plus its <code>wbs:…</code> tag —
+                        use the Filter dialog on the project page to find them again.
+                    </MudText>
+                    @if (_result!.Warnings.Count > 0)
+                    {
+                        <MudExpansionPanels>
+                            <MudExpansionPanel Text="@($"Warnings ({_result!.Warnings.Count})")">
+                                <MudList T="string" Dense="true">
+                                    @foreach (var w in _result!.Warnings.Take(50))
+                                    {
+                                        <MudListItem T="string" Value="w" Icon="@Icons.Material.Filled.Warning">
+                                            <MudText Typo="Typo.body2">@w</MudText>
+                                        </MudListItem>
+                                    }
+                                </MudList>
+                            </MudExpansionPanel>
+                        </MudExpansionPanels>
+                    }
+                </MudStack>
+                break;
+        }
+    </DialogContent>
+    <DialogActions>
+        @switch (_stage)
+        {
+            case Stage.Source:
+                <MudButton OnClick="Cancel">Cancel</MudButton>
+                <MudButton OnClick="ParseAsync" Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Search"
+                           Disabled="@(_file is null || _busy)">Parse &amp; preview</MudButton>
+                break;
+            case Stage.Preview:
+                <MudButton OnClick="@(() => _stage = Stage.Source)" StartIcon="@Icons.Material.Filled.ArrowBack">Back</MudButton>
+                <MudSpacer />
+                <MudButton OnClick="Cancel">Cancel</MudButton>
+                <MudButton OnClick="ApplyAsync" Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.PlayArrow"
+                           Disabled="@(_busy || _plan is null || _plan.RowCount == 0)">Confirm import</MudButton>
+                break;
+            case Stage.Importing:
+                <MudButton Disabled="true">Working…</MudButton>
+                break;
+            case Stage.Done:
+                <MudButton OnClick="OpenProject" Variant="Variant.Outlined" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.OpenInNew">Open project</MudButton>
+                <MudSpacer />
+                <MudButton OnClick="Close" Variant="Variant.Filled" Color="Color.Primary">Close</MudButton>
+                break;
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    /// <summary>When set, the dialog hides the target picker and imports into
+    /// this project. Used when launched from a specific project's detail page.</summary>
+    [Parameter] public Guid? LockedToProjectId { get; set; }
+
+    private enum Stage { Source, Preview, Importing, Done }
+    private enum TargetMode { Existing, New }
+
+    private Stage _stage = Stage.Source;
+    private TargetMode _targetMode = TargetMode.Existing;
+    private IBrowserFile? _file;
+    private ImportPlan? _plan;
+    private ImportResult? _result;
+    private string? _error;
+    private bool _busy;
+    private Guid _currentUserId;
+    private List<AdminProject> _adminProjects = new();
+    private Guid? _existingProjectId;
+    private string _newKey = "";
+    private string _newName = "";
+    private string? _lockedProjectLabel;
+    private Guid? _resolvedProjectId;
+    private string? _resolvedProjectKey;
+
+    private sealed record AdminProject(Guid Id, string Key, string Name);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out _currentUserId);
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (LockedToProjectId is { } lid)
+        {
+            var p = await db.Projects.AsNoTracking().FirstOrDefaultAsync(x => x.Id == lid);
+            if (p is not null) _lockedProjectLabel = $"{p.Key} — {p.Name}";
+            _existingProjectId = lid;
+            _targetMode = TargetMode.Existing;
+            return;
+        }
+        // Admin-only: imports create issues + comments + links on the user's
+        // behalf, mirroring what the existing edit dialog already requires.
+        _adminProjects = await db.Projects.AsNoTracking()
+            .Where(p => p.Members.Any(m => m.UserId == _currentUserId && m.Role == ProjectRole.Admin))
+            .OrderBy(p => p.Key)
+            .Select(p => new AdminProject(p.Id, p.Key, p.Name))
+            .ToListAsync();
+        if (_adminProjects.Count == 0) _targetMode = TargetMode.New;
+    }
+
+    private string StageTitle() => _stage switch
+    {
+        Stage.Source => "Import issues from xlsx",
+        Stage.Preview => "Preview import",
+        Stage.Importing => "Importing…",
+        Stage.Done => "Import complete",
+        _ => "Import",
+    };
+
+    private string ProjectLabel(Guid? id)
+        => id is null ? "" : (_adminProjects.FirstOrDefault(p => p.Id == id) is { } p ? $"{p.Key} — {p.Name}" : "");
+
+    private string TargetSummary()
+    {
+        if (LockedToProjectId is not null) return _lockedProjectLabel ?? "—";
+        if (_targetMode == TargetMode.New) return $"NEW project '{_newName}' (key {_newKey.ToUpperInvariant()})";
+        return _adminProjects.FirstOrDefault(p => p.Id == _existingProjectId) is { } p
+            ? $"{p.Key} — {p.Name}" : "—";
+    }
+
+    private void OnFilePicked(IBrowserFile? file)
+    {
+        _file = file;
+        _error = null;
+    }
+
+    private async Task ParseAsync()
+    {
+        _error = null;
+        if (_file is null) { _error = "Choose a file first."; return; }
+        if (LockedToProjectId is null)
+        {
+            if (_targetMode == TargetMode.Existing && _existingProjectId is null)
+            { _error = "Pick a target project."; return; }
+            if (_targetMode == TargetMode.New)
+            {
+                if (string.IsNullOrWhiteSpace(_newKey) || string.IsNullOrWhiteSpace(_newName))
+                { _error = "New project needs both a Key and a Name."; return; }
+            }
+        }
+
+        _busy = true;
+        try
+        {
+            await using var stream = _file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            ms.Position = 0;
+            _plan = Importer.Parse(ms);
+            if (_plan.RowCount == 0)
+            {
+                _error = "No importable rows found in the workbook.";
+                return;
+            }
+            _stage = Stage.Preview;
+        }
+        catch (InvalidDataException ex) { _error = ex.Message; }
+        catch (IOException ex) when (ex.Message.Contains("exceeds", StringComparison.OrdinalIgnoreCase))
+        { _error = "File is too large (limit: 10 MB)."; }
+        catch (Exception ex) { _error = $"Couldn't parse the file: {ex.Message}"; }
+        finally { _busy = false; }
+    }
+
+    private async Task ApplyAsync()
+    {
+        _error = null;
+        if (_plan is null) return;
+        _busy = true;
+        _stage = Stage.Importing;
+        StateHasChanged();
+
+        try
+        {
+            Guid projectId;
+            string projectKey;
+            if (LockedToProjectId is { } lid)
+            {
+                projectId = lid;
+                await using var db = await DbFactory.CreateDbContextAsync();
+                projectKey = (await db.Projects.AsNoTracking().FirstAsync(p => p.Id == lid)).Key;
+            }
+            else if (_targetMode == TargetMode.Existing && _existingProjectId is { } eid)
+            {
+                projectId = eid;
+                projectKey = _adminProjects.First(p => p.Id == eid).Key;
+            }
+            else
+            {
+                (projectId, projectKey) = await CreateNewProjectAsync();
+            }
+
+            _result = await Importer.ApplyAsync(projectId, _plan, _currentUserId, default);
+            _resolvedProjectId = projectId;
+            _resolvedProjectKey = projectKey;
+            _stage = Stage.Done;
+        }
+        catch (Exception ex)
+        {
+            _error = $"Import failed: {FullError(ex)}";
+            _stage = Stage.Preview;
+        }
+        finally { _busy = false; }
+    }
+
+    // EF often wraps the meaningful Postgres / domain error two layers down;
+    // surface the whole chain so the dialog isn't useless for diagnosis.
+    private static string FullError(Exception ex)
+    {
+        var parts = new List<string>();
+        for (var e = ex; e is not null; e = e.InnerException)
+            parts.Add($"{e.GetType().Name}: {e.Message}");
+        return string.Join("  →  ", parts);
+    }
+
+    // New-project path: re-uses the same Project.Create + WorkflowSeeder dance
+    // as Projects.razor so an imported project is indistinguishable from one
+    // created manually.
+    private async Task<(Guid Id, string Key)> CreateNewProjectAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var org = await db.Organizations.FirstOrDefaultAsync()
+            ?? throw new InvalidOperationException("No organization is configured.");
+        var key = _newKey.Trim();
+        var name = _newName.Trim();
+        var dupe = await db.Projects.AsNoTracking()
+            .AnyAsync(p => p.Key.ToUpper() == key.ToUpper());
+        if (dupe) throw new InvalidOperationException($"A project with key '{key.ToUpperInvariant()}' already exists.");
+        var project = Project.Create(org.Id, key, name, description: null, _currentUserId, Clock.UtcNow);
+        db.Projects.Add(project);
+        await db.SaveChangesAsync();
+        await WorkflowSeeder.EnsureDefaultForProjectAsync(project.Id, Clock.UtcNow, default);
+        return (project.Id, project.Key);
+    }
+
+    private void OpenProject()
+    {
+        if (_resolvedProjectId is { } pid) Nav.NavigateTo($"/projects/{pid}", forceLoad: true);
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+    private void Close() => MudDialog.Close(DialogResult.Ok(_resolvedProjectId));
+}
+
+@* Compact stat tile reused six times above; inline RenderFragment keeps it out
+   of a separate component file. *@
+@code {
+    private RenderFragment RenderStat(string label, int value, Color color = Color.Default) =>
+        @<MudStack Spacing="0" AlignItems="AlignItems.Start">
+            <MudText Typo="Typo.h6" Color="@color">@value</MudText>
+            <MudText Typo="Typo.caption" Color="Color.Default">@label</MudText>
+        </MudStack>;
+}
