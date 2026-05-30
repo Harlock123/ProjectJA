@@ -18,6 +18,13 @@
     <MudSpacer />
     <MudButton OnClick="OpenImportAsync" Variant="Variant.Outlined" Color="Color.Primary"
                StartIcon="@Icons.Material.Filled.Upload">Import xlsx</MudButton>
+    <MudButton OnClick="@(() => _rightPanelOpen = !_rightPanelOpen)"
+               Variant="Variant.Outlined" Color="Color.Primary"
+               StartIcon="@(_rightPanelOpen ? Icons.Material.Filled.ChevronRight : Icons.Material.Filled.ChevronLeft)"
+               Class="ml-2"
+               title="@(_rightPanelOpen ? "Hide the create panel to widen the projects list" : "Show the create panel")">
+        @(_rightPanelOpen ? "Hide form" : "Show form")
+    </MudButton>
 </MudStack>
 
 @if (Denied is not null)
@@ -28,7 +35,7 @@
 }
 
 <MudGrid>
-    <MudItem xs="12" md="8">
+    <MudItem xs="12" md="@(_rightPanelOpen ? 8 : 12)">
         <MudPaper Class="pa-4" Elevation="1">
             @if (_projects is null)
             {
@@ -68,6 +75,8 @@
         </MudPaper>
     </MudItem>
 
+    @if (_rightPanelOpen)
+    {
     <MudItem xs="12" md="4">
         <MudPaper Class="pa-4" Elevation="1">
             <MudText Typo="Typo.h6" GutterBottom="true">Create a project</MudText>
@@ -96,10 +105,12 @@
             </MudStack>
         </MudPaper>
     </MudItem>
+    }
 </MudGrid>
 
 @code {
     private List<Project>? _projects;
+    private bool _rightPanelOpen = true;
     private Draft _draft = new();
     private string? _error;
     private Guid _currentUserId;
