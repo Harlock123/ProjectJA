@@ -18,6 +18,7 @@ public static class IssuesModule
         services.AddScoped<IIssueLinkService, IssueLinkService>();
         services.AddScoped<IIssueExportService, IssueExportService>();
         services.AddScoped<IIssueImportService, IssueImportService>();
+        services.AddScoped<ITagManagementService, TagManagementService>();
         return services;
     }
 

@@ -72,6 +72,11 @@ else
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap" Class="mb-3">
                     <MudButton OnClick="OpenFilterAsync" Variant="Variant.Outlined" Color="Color.Primary"
                                StartIcon="@Icons.Material.Filled.FilterAlt" Size="Size.Small">Filter</MudButton>
+                    @if (_isAdmin)
+                    {
+                        <MudButton OnClick="OpenTagsAsync" Variant="Variant.Outlined" Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Sell" Size="Size.Small">Tag management</MudButton>
+                    }
                     @if (_filter.IsActive)
                     {
                         <MudButton OnClick="ClearFilter" Variant="Variant.Text" Color="Color.Default"
@@ -385,6 +390,19 @@ else
 
         var url = choice == true ? baseUrl + BuildFilterQuery(_filter) : baseUrl;
         await JS.InvokeVoidAsync("open", url, "_blank");
+    }
+
+    private async Task OpenTagsAsync()
+    {
+        var parameters = new DialogParameters<TagManagementDialog> { { x => x.ProjectId, ProjectId } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<TagManagementDialog>("Tag management", parameters, options);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled) return;
+        // The dialog mutates issue labels in-place; the page's _issues list is
+        // a snapshot, so reload to reflect any chip changes the user might see.
+        await ReloadAsync();
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task OpenImportAsync()

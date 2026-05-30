@@ -1,0 +1,183 @@
+@using ProjectJA.Modules.Issues.Contracts
+@inject ITagManagementService Tags
+@inject IDialogService DialogService
+
+<MudDialog Style="min-width:36rem;">
+    <TitleContent>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudIcon Icon="@Icons.Material.Filled.Sell" />
+            <MudText Typo="Typo.h6">Tag management</MudText>
+            <HelpTooltip Text="Lists every unique tag (label) used by issues in this project. Pick a tag to rename it across every issue that carries it, or remove it from every issue. Tag matching is case-insensitive; renames respect the per-issue normalisation rules (max 40 chars per tag, max 20 per issue, dedupe collisions)." />
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (_tags.Count == 0)
+        {
+            <MudText Color="Color.Default">No tags in use on any issue in this project.</MudText>
+        }
+        else
+        {
+            <div style="max-height:40vh;overflow:auto;">
+                <MudTable Items="_tags" Hover="true" Dense="true" FixedHeader="true"
+                          T="TagSummary"
+                          SelectedItem="_selected"
+                          SelectedItemChanged="@(s => OnSelected(s))">
+                    <HeaderContent>
+                        <MudTh>Tag</MudTh>
+                        <MudTh Style="width:8rem;text-align:right;">Issues</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@context.Tag</MudChip>
+                        </MudTd>
+                        <MudTd Style="text-align:right;">@context.IssueCount</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </div>
+
+            @if (_selected is not null)
+            {
+                <MudPaper Class="pa-3 mt-3" Outlined="true">
+                    <MudText Typo="Typo.subtitle2" GutterBottom="true">
+                        Selected: <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">@_selected.Tag</MudChip>
+                        <MudText Inline="true" Typo="Typo.body2" Color="Color.Default">
+                            on @_selected.IssueCount issue@(_selected.IssueCount == 1 ? "" : "s")
+                        </MudText>
+                    </MudText>
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Start">
+                        <MudTextField @bind-Value="_renameTo" Label="Rename to"
+                                      Variant="Variant.Outlined" Margin="Margin.Dense"
+                                      MaxLength="40" Immediate="true"
+                                      Placeholder="@_selected.Tag" />
+                        <MudButton OnClick="RenameAsync" Variant="Variant.Filled" Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Edit"
+                                   Disabled="@(_busy || string.IsNullOrWhiteSpace(_renameTo))">
+                            Rename
+                        </MudButton>
+                        <MudButton OnClick="RemoveAsync" Variant="Variant.Outlined" Color="Color.Error"
+                                   StartIcon="@Icons.Material.Filled.Delete" Disabled="@_busy">
+                            Remove from all
+                        </MudButton>
+                    </MudStack>
+                </MudPaper>
+            }
+
+            @if (_status is not null)
+            {
+                <MudAlert Severity="@_statusSeverity" Class="mt-3" Dense="true">@_status</MudAlert>
+            }
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private bool _loading = true;
+    private bool _busy;
+    private bool _changed;
+    private List<TagSummary> _tags = new();
+    private TagSummary? _selected;
+    private string _renameTo = "";
+    private string? _status;
+    private string? _error;
+    private Severity _statusSeverity = Severity.Success;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            var list = await Tags.ListForProjectAsync(ProjectId, default);
+            _tags = list.ToList();
+            // Preserve selection across reload if the tag still exists, else
+            // pick the renamed value when we know it.
+            if (_selected is not null)
+                _selected = _tags.FirstOrDefault(t => string.Equals(t.Tag, _selected.Tag, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex) { _error = $"Couldn't load tags: {ex.Message}"; }
+        finally { _loading = false; }
+    }
+
+    private void OnSelected(TagSummary? s)
+    {
+        _selected = s;
+        _renameTo = s?.Tag ?? "";
+        _status = null;
+        _error = null;
+    }
+
+    private async Task RenameAsync()
+    {
+        if (_selected is null || string.IsNullOrWhiteSpace(_renameTo)) return;
+        _error = null;
+        _status = null;
+        _busy = true;
+        try
+        {
+            var oldTag = _selected.Tag;
+            var newTag = _renameTo.Trim();
+            var n = await Tags.RenameAsync(ProjectId, oldTag, newTag, default);
+            _status = n == 0
+                ? $"No issues touched (the new tag was identical or no longer present)."
+                : $"Renamed '{oldTag}' → '{newTag}' on {n} issue{(n == 1 ? "" : "s")}.";
+            _statusSeverity = n == 0 ? Severity.Info : Severity.Success;
+            if (n > 0) _changed = true;
+            // Track the renamed value so reload reselects it if still present.
+            _selected = new TagSummary(newTag, _selected.IssueCount);
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = $"Rename failed: {ex.Message}"; }
+        finally { _busy = false; }
+    }
+
+    private async Task RemoveAsync()
+    {
+        if (_selected is null) return;
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            title: "Remove tag",
+            message: $"Remove the tag '{_selected.Tag}' from {_selected.IssueCount} issue(s)? " +
+                     "Other tags on those issues stay in place.",
+            yesText: "Remove",
+            cancelText: "Cancel");
+        if (confirm != true) return;
+
+        _error = null;
+        _status = null;
+        _busy = true;
+        try
+        {
+            var tag = _selected.Tag;
+            var n = await Tags.RemoveAsync(ProjectId, tag, default);
+            _status = $"Removed '{tag}' from {n} issue{(n == 1 ? "" : "s")}.";
+            _statusSeverity = Severity.Success;
+            if (n > 0) _changed = true;
+            _selected = null;
+            _renameTo = "";
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = $"Remove failed: {ex.Message}"; }
+        finally { _busy = false; }
+    }
+
+    private void Close()
+    {
+        if (_changed) MudDialog.Close(DialogResult.Ok(true));
+        else MudDialog.Cancel();
+    }
+}
