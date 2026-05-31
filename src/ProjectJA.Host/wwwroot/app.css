@@ -36,3 +36,16 @@ h1:focus {
 .form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
     text-align: start;
 }
+
+/* Force a uniform button label size across every MudButton, regardless of
+   Size="Small"/"Large". MudBlazor's per-size variants ship their own
+   font-size on the size-specific classes, which override the theme's
+   Typography.Button setting; without this rule, Size.Small buttons (Filter,
+   Tag management, etc.) shrink to ~0.8125rem and Size.Large jumps to
+   ~0.9375rem. This matches every size variant to the theme value. */
+.mud-button-root,
+.mud-button-root.mud-button-small,
+.mud-button-root.mud-button-large,
+.mud-button-root .mud-button-label {
+    font-size: 0.75rem !important;
+}

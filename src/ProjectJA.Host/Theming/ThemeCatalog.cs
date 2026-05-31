@@ -73,6 +73,15 @@ public sealed class ThemeCatalog
             ? theme
             : _themes[DefaultKey];
 
+    // Shared across every theme so a label like "MEMBERSHIP" fits inside a
+    // standard MudButton without truncation. MudBlazor's default Button
+    // typography is 0.875rem; 0.75rem buys ~14% horizontal room with no
+    // visible "shrunken UI" effect at normal zoom levels.
+    private static readonly Typography SharedTypography = new()
+    {
+        Button = new ButtonTypography { FontSize = "0.75rem" },
+    };
+
     private static MudTheme Build(
         string lightPrimary, string lightSecondary, string lightAppbar,
         string darkPrimary, string darkSecondary, string darkAppbar,
@@ -95,6 +104,7 @@ public sealed class ThemeCatalog
             Surface = darkSurface,
             DrawerBackground = darkBackground,
         },
+        Typography = SharedTypography,
     };
 
     private static MudTheme BuildContrast() => new()
@@ -120,5 +130,6 @@ public sealed class ThemeCatalog
             TextPrimary = "#ffffff",
             DrawerBackground = "#000000",
         },
+        Typography = SharedTypography,
     };
 }
