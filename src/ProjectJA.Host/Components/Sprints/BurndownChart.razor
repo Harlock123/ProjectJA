@@ -1,0 +1,162 @@
+@using System.Globalization
+@using ProjectJA.Modules.Projects.Contracts
+
+@if (View is null)
+{
+    <MudText Color="Color.Default">Burndown is available once the sprint starts.</MudText>
+}
+else
+{
+    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+        <MudText Typo="Typo.subtitle2">Burndown</MudText>
+        <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
+            <MudButton OnClick="@(() => SetMode(BurnMode.Count))"
+                       Variant="@(_mode == BurnMode.Count ? Variant.Filled : Variant.Outlined)">Count</MudButton>
+            <MudButton OnClick="@(() => SetMode(BurnMode.Points))"
+                       Variant="@(_mode == BurnMode.Points ? Variant.Filled : Variant.Outlined)">Points</MudButton>
+        </MudButtonGroup>
+        <MudText Typo="Typo.caption" Color="Color.Default">
+            Window: @View.Start.ToString("yyyy-MM-dd") → @View.End.ToString("yyyy-MM-dd")
+            @if (_todayInWindow)
+            {
+                <span> · today @View.Today.ToString("yyyy-MM-dd")</span>
+            }
+        </MudText>
+    </MudStack>
+
+    <svg width="@_width.ToString(CultureInfo.InvariantCulture)"
+         height="@_height.ToString(CultureInfo.InvariantCulture)"
+         style="display:block;max-width:100%;">
+        @foreach (var line in _gridLines)
+        {
+            <line x1="@line.X1.ToString(CultureInfo.InvariantCulture)" y1="@line.Y1.ToString(CultureInfo.InvariantCulture)"
+                  x2="@line.X2.ToString(CultureInfo.InvariantCulture)" y2="@line.Y2.ToString(CultureInfo.InvariantCulture)"
+                  stroke="var(--mud-palette-lines-default)" stroke-dasharray="2,3" />
+        }
+        @foreach (var lbl in _yLabels)
+        {
+            <svg:text x="@lbl.X.ToString(CultureInfo.InvariantCulture)" y="@lbl.Y.ToString(CultureInfo.InvariantCulture)"
+                      font-size="10" text-anchor="end" fill="var(--mud-palette-text-secondary)">@lbl.Text</svg:text>
+        }
+        <line x1="@PadLeft.ToString(CultureInfo.InvariantCulture)" y1="@_xAxisY.ToString(CultureInfo.InvariantCulture)"
+              x2="@_xAxisX2.ToString(CultureInfo.InvariantCulture)" y2="@_xAxisY.ToString(CultureInfo.InvariantCulture)"
+              stroke="var(--mud-palette-text-secondary)" />
+        @foreach (var lbl in _xLabels)
+        {
+            <svg:text x="@lbl.X.ToString(CultureInfo.InvariantCulture)" y="@lbl.Y.ToString(CultureInfo.InvariantCulture)"
+                      font-size="10" text-anchor="middle" fill="var(--mud-palette-text-secondary)">@lbl.Text</svg:text>
+        }
+        @if (_todayInWindow)
+        {
+            <line x1="@_todayX.ToString(CultureInfo.InvariantCulture)" y1="@PadTop.ToString(CultureInfo.InvariantCulture)"
+                  x2="@_todayX.ToString(CultureInfo.InvariantCulture)" y2="@_xAxisY.ToString(CultureInfo.InvariantCulture)"
+                  stroke="var(--mud-palette-error)" stroke-width="1" stroke-dasharray="4,3" />
+        }
+        <path d="@_idealPath" fill="none" stroke="var(--mud-palette-text-secondary)"
+              stroke-width="1.5" stroke-dasharray="6,4" opacity="0.85" />
+        <path d="@_actualPath" fill="none" stroke="var(--mud-palette-primary)" stroke-width="2" />
+    </svg>
+
+    <MudStack Row="true" Spacing="3" Class="mt-1" AlignItems="AlignItems.Center">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3"
+                stroke="var(--mud-palette-text-secondary)" stroke-width="1.5" stroke-dasharray="6,4" /></svg>
+            <MudText Typo="Typo.caption">Ideal</MudText>
+        </MudStack>
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3"
+                stroke="var(--mud-palette-primary)" stroke-width="2" /></svg>
+            <MudText Typo="Typo.caption">Actual (@_unitLabel)</MudText>
+        </MudStack>
+        @if (_todayInWindow)
+        {
+            <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+                <svg width="6" height="14"><line x1="3" y1="0" x2="3" y2="14"
+                    stroke="var(--mud-palette-error)" stroke-width="1" stroke-dasharray="4,3" /></svg>
+                <MudText Typo="Typo.caption">Today</MudText>
+            </MudStack>
+        }
+    </MudStack>
+}
+
+@code {
+    [Parameter] public BurndownView? View { get; set; }
+
+    public enum BurnMode { Count, Points }
+    private BurnMode _mode = BurnMode.Count;
+
+    // Plot geometry — fixed pixels so the SVG can sit inside a MudPaper at
+    // arbitrary widths without warping. max-width:100% on the <svg> lets it
+    // shrink on narrow viewports; the bars don't reflow but the canvas does.
+    private const double PlotW = 720, PlotH = 220;
+    private const double PadLeft = 44, PadRight = 12, PadTop = 8, PadBottom = 28;
+
+    private record GridLine(double X1, double Y1, double X2, double Y2);
+    private record Label(double X, double Y, string Text);
+
+    private double _width, _height, _xAxisY, _xAxisX2, _todayX;
+    private bool _todayInWindow;
+    private string _idealPath = "", _actualPath = "", _unitLabel = "issues";
+    private List<GridLine> _gridLines = new();
+    private List<Label> _yLabels = new();
+    private List<Label> _xLabels = new();
+
+    protected override void OnParametersSet() => Recompute();
+
+    private void SetMode(BurnMode mode) { _mode = mode; Recompute(); }
+
+    private void Recompute()
+    {
+        if (View is null) return;
+
+        var (idealSelector, actualSelector, total) = _mode == BurnMode.Count
+            ? ((Func<BurndownDay, double>)(d => d.IdealCount), (Func<BurndownDay, double>)(d => d.ActualCount), (double)View.TotalIssues)
+            : ((Func<BurndownDay, double>)(d => d.IdealPoints), (Func<BurndownDay, double>)(d => d.ActualPoints), (double)View.TotalPoints);
+        _unitLabel = _mode == BurnMode.Count ? "issues" : "points";
+        var yMax = Math.Max(1, total);
+
+        _width = PlotW + PadLeft + PadRight;
+        _height = PlotH + PadTop + PadBottom;
+        _xAxisY = PadTop + PlotH;
+        _xAxisX2 = PadLeft + PlotW;
+
+        var n = Math.Max(1, View.Days.Count - 1);
+        double X(int i) => PadLeft + PlotW * i / n;
+        double Y(double v) => PadTop + PlotH * (1 - v / yMax);
+
+        _gridLines = new();
+        _yLabels = new();
+        foreach (var frac in new[] { 0.0, 0.5, 1.0 })
+        {
+            var y = Y(yMax * frac);
+            _gridLines.Add(new GridLine(PadLeft, y, PadLeft + PlotW, y));
+            _yLabels.Add(new Label(PadLeft - 4, y + 4, (yMax * frac).ToString("0.#")));
+        }
+
+        _xLabels = new();
+        foreach (var i in new[] { 0, View.Days.Count / 2, View.Days.Count - 1 })
+            _xLabels.Add(new Label(X(i), PadTop + PlotH + 14, View.Days[i].Date.ToString("MMM d")));
+
+        _todayInWindow = View.Today >= View.Start && View.Today <= View.End;
+        if (_todayInWindow)
+            _todayX = X(View.Today.DayNumber - View.Start.DayNumber);
+
+        _idealPath = BuildPath(View.Days, X, Y, idealSelector);
+        _actualPath = BuildPath(View.Days, X, Y, actualSelector);
+    }
+
+    private static string BuildPath(IReadOnlyList<BurndownDay> days,
+        Func<int, double> x, Func<double, double> y, Func<BurndownDay, double> series)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (var i = 0; i < days.Count; i++)
+        {
+            sb.Append(i == 0 ? "M " : "L ");
+            sb.Append(x(i).ToString("0.##", CultureInfo.InvariantCulture));
+            sb.Append(' ');
+            sb.Append(y(series(days[i])).ToString("0.##", CultureInfo.InvariantCulture));
+            sb.Append(' ');
+        }
+        return sb.ToString();
+    }
+}

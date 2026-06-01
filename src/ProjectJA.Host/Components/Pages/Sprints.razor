@@ -11,7 +11,9 @@
 @using ProjectJA.Modules.Workflows.Contracts
 @using ProjectJA.Modules.Workflows.Domain
 @using ProjectJA.SharedKernel.Audit
+@using ProjectJA.Host.Components.Sprints
 @inject AppDbContext Db
+@inject IBurndownQueries Burndowns
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject IClock Clock
 @inject NavigationManager Nav
@@ -162,6 +164,13 @@ else
                             }
                         </MudStack>
 
+                        @if (s.Status != SprintStatus.Planned && _burndowns.TryGetValue(s.Id, out var burn) && burn is not null)
+                        {
+                            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                                <BurndownChart View="@burn" />
+                            </MudPaper>
+                        }
+
                         @if (issues.Count == 0)
                         {
                             <MudText Color="Color.Default">No issues in this sprint.</MudText>
@@ -239,6 +248,7 @@ else
     // retention job).
     private Dictionary<Guid, int> _carriedOver = new();
     private Dictionary<Guid, List<Issue>> _issuesBySprint = new();
+    private Dictionary<Guid, BurndownView?> _burndowns = new();
     private Draft _draft = new();
     private string? _error;
 
@@ -266,6 +276,20 @@ else
         _stateNames = wf?.States.ToDictionary(s => s.Id, s => s.Name) ?? new();
         _stateCategories = wf?.States.ToDictionary(s => s.Id, s => s.Category) ?? new();
         await LoadCarriedOverAsync();
+        await LoadBurndownsAsync();
+    }
+
+    // Per-sprint burndown views. Only the Started/Completed sprints get a
+    // chart; Planned ones return null from the service and we skip them.
+    private async Task LoadBurndownsAsync()
+    {
+        _burndowns = new();
+        foreach (var s in _sprints)
+        {
+            if (s.Status == SprintStatus.Planned) continue;
+            try { _burndowns[s.Id] = await Burndowns.GetForSprintAsync(s.Id, default); }
+            catch { _burndowns[s.Id] = null; }
+        }
     }
 
     // Reads back the `sprint.completed` audit rows for this project and parses

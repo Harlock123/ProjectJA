@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ProjectJA.Modules.Issues.Application;
 using ProjectJA.Modules.Issues.Contracts;
 using ProjectJA.Modules.Issues.Endpoints;
+using ProjectJA.Modules.Projects.Contracts;
 
 namespace ProjectJA.Modules.Issues;
 
@@ -19,6 +20,7 @@ public static class IssuesModule
         services.AddScoped<IIssueExportService, IssueExportService>();
         services.AddScoped<IIssueImportService, IssueImportService>();
         services.AddScoped<ITagManagementService, TagManagementService>();
+        services.AddScoped<IBurndownQueries, BurndownQueries>();
         return services;
     }
 

@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\ProjectJA.SharedKernel\ProjectJA.SharedKernel.csproj" />
+    <ProjectReference Include="..\ProjectJA.Modules.Audit\ProjectJA.Modules.Audit.csproj" />
     <ProjectReference Include="..\ProjectJA.Modules.Identity\ProjectJA.Modules.Identity.csproj" />
     <ProjectReference Include="..\ProjectJA.Modules.Projects\ProjectJA.Modules.Projects.csproj" />
     <ProjectReference Include="..\ProjectJA.Modules.Workflows\ProjectJA.Modules.Workflows.csproj" />
