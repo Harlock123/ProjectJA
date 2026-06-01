@@ -42,6 +42,14 @@ else
             <MudButton OnClick="ClearFilter" Variant="Variant.Text" Color="Color.Default"
                        StartIcon="@Icons.Material.Filled.Clear" Size="Size.Small" Class="ml-2">Clear filter</MudButton>
         }
+        <MudButton OnClick="ExpandAll" Variant="Variant.Outlined" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.UnfoldMore" Size="Size.Small" Class="ml-2"
+                   Disabled="@(_parentIds.Count == 0)"
+                   title="Show every WBS group and its children">Expand all</MudButton>
+        <MudButton OnClick="CollapseAll" Variant="Variant.Outlined" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.UnfoldLess" Size="Size.Small" Class="ml-2"
+                   Disabled="@(_parentIds.Count == 0)"
+                   title="Collapse every WBS group to its top-level row">Collapse all</MudButton>
         <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary" Class="ml-3">
             <MudButton OnClick="@(() => SetZoom(ZoomLevel.Day))"
                        Variant="@(_zoom == ZoomLevel.Day ? Variant.Filled : Variant.Outlined)">Day</MudButton>
@@ -164,6 +172,11 @@ else
     private DateOnly _windowEnd;
     private DateOnly _today;
     private HashSet<Guid> _collapsed = new();
+    // Every issue in the tree that has at least one child — recomputed on
+    // each RebuildView. Drives the disabled state of the expand/collapse-all
+    // buttons and powers Collapse all in O(parents) rather than re-walking
+    // the tree.
+    private HashSet<Guid> _parentIds = new();
 
     private List<TimelineRow>? _visibleRows;
     private List<Issue> _undatedRows = new();
@@ -224,6 +237,7 @@ else
         var tree = WbsTree.Build(filtered);
         var nodeById = tree.ToDictionary(n => n.IssueId);
         var issueById = filtered.ToDictionary(i => i.Id);
+        _parentIds = tree.Where(n => n.ChildrenIds.Count > 0).Select(n => n.IssueId).ToHashSet();
 
         // Skip rows whose parent (or any ancestor) is collapsed.
         var hidden = new HashSet<Guid>();
@@ -300,6 +314,20 @@ else
     private void ToggleCollapsed(Guid id)
     {
         if (!_collapsed.Add(id)) _collapsed.Remove(id);
+        RebuildView();
+    }
+
+    private void ExpandAll()
+    {
+        if (_collapsed.Count == 0) return;
+        _collapsed.Clear();
+        RebuildView();
+    }
+
+    private void CollapseAll()
+    {
+        if (_parentIds.Count == 0) return;
+        _collapsed = new HashSet<Guid>(_parentIds);
         RebuildView();
     }
 
