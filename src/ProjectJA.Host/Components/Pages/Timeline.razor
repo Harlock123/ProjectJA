@@ -1,0 +1,342 @@
+@page "/projects/{projectId:guid}/timeline"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using ProjectJA.Modules.Identity.Contracts
+@using ProjectJA.Modules.Issues.Contracts
+@using ProjectJA.Modules.Issues.Domain
+@using ProjectJA.Modules.Projects.Contracts
+@using ProjectJA.Modules.Projects.Domain
+@using ProjectJA.Modules.Workflows.Contracts
+@using ProjectJA.Modules.Workflows.Domain
+@using ProjectJA.Host.Components.Dialogs
+@using ProjectJA.Host.Components.Timeline
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IClock Clock
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider Auth
+@inject IProjectQueries Projects
+@inject IWorkflowQueries WorkflowsQueries
+@inject ITagManagementService TagsService
+@inject IUserQueries Users
+@inject IDialogService DialogService
+
+<PageTitle>@(_project?.Name ?? "Timeline")</PageTitle>
+
+@if (_project is null)
+{
+    <MudText>Loading…</MudText>
+}
+else
+{
+    <MudButton Href="@($"/projects/{ProjectId}")" Variant="Variant.Text"
+               StartIcon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" Class="mb-2">Project</MudButton>
+
+    <MudStack Row="true" AlignItems="AlignItems.Baseline" Class="mb-4">
+        <MudText Typo="Typo.h4"><span style="font-family:monospace;">@_project.Key</span> — Timeline</MudText>
+        <MudSpacer />
+        <MudButton OnClick="OpenFilterAsync" Variant="Variant.Outlined" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.FilterAlt" Size="Size.Small">Filter</MudButton>
+        @if (_filter.IsActive)
+        {
+            <MudButton OnClick="ClearFilter" Variant="Variant.Text" Color="Color.Default"
+                       StartIcon="@Icons.Material.Filled.Clear" Size="Size.Small" Class="ml-2">Clear filter</MudButton>
+        }
+        <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary" Class="ml-3">
+            <MudButton OnClick="@(() => SetZoom(ZoomLevel.Day))"
+                       Variant="@(_zoom == ZoomLevel.Day ? Variant.Filled : Variant.Outlined)">Day</MudButton>
+            <MudButton OnClick="@(() => SetZoom(ZoomLevel.Week))"
+                       Variant="@(_zoom == ZoomLevel.Week ? Variant.Filled : Variant.Outlined)">Week</MudButton>
+            <MudButton OnClick="@(() => SetZoom(ZoomLevel.Month))"
+                       Variant="@(_zoom == ZoomLevel.Month ? Variant.Filled : Variant.Outlined)">Month</MudButton>
+        </MudButtonGroup>
+    </MudStack>
+
+    @if (_filter.IsActive)
+    {
+        <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Class="mb-3">
+            <MudText Typo="Typo.body2" Color="Color.Default">Filter applied:</MudText>
+            @if (_filter.Type is { } ft)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">Type: @ft</MudChip>
+            }
+            @if (_filter.WorkflowStateId is { } fsid)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">Status: @(_stateNames.GetValueOrDefault(fsid, "?"))</MudChip>
+            }
+            @if (_filter.Priority is { } fp)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">Priority: @fp</MudChip>
+            }
+            @if (_filter.AssigneeId is { } fa)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">Assignee: @AssigneeChipLabel(fa)</MudChip>
+            }
+            @if (!string.IsNullOrWhiteSpace(_filter.TitleContains))
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">Title: "@_filter.TitleContains"</MudChip>
+            }
+        </MudStack>
+    }
+
+    @if (_visibleRows is null)
+    {
+        <MudText>Loading issues…</MudText>
+    }
+    else if (_visibleRows.Count == 0 && _undatedRows.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Dense="true">No issues match the current filter.</MudAlert>
+    }
+    else
+    {
+        <MudPaper Elevation="1" Class="pa-0" Style="overflow:auto;">
+            <TimelineChart Rows="_visibleRows"
+                           Links="_visibleLinks"
+                           StateCategoryById="_stateCategories"
+                           UserNamesById="_userNames"
+                           UserAvatarsById="_userAvatars"
+                           TagStyles="_tagStyles"
+                           ProjectKey="@_project.Key"
+                           WindowStart="@_windowStart"
+                           WindowEnd="@_windowEnd"
+                           PxPerDay="@PxPerDay"
+                           Today="@_today"
+                           Collapsed="_collapsed"
+                           OnToggleCollapsed="ToggleCollapsed"
+                           OnBarClicked="OpenIssueAsync" />
+        </MudPaper>
+
+        <MudExpansionPanels Class="mt-3" MultiExpansion="false">
+            <MudExpansionPanel Text="@($"Undated ({_undatedRows.Count})")"
+                               Expanded="@(_undatedRows.Count > 0 && _undatedRows.Count <= 20)">
+                @if (_undatedRows.Count == 0)
+                {
+                    <MudText Color="Color.Default">Every visible issue has both Start and Finish set.</MudText>
+                }
+                else
+                {
+                    <MudTable Items="_undatedRows" Hover="true" Dense="true">
+                        <HeaderContent>
+                            <MudTh>Key</MudTh>
+                            <MudTh>Title</MudTh>
+                            <MudTh>Start</MudTh>
+                            <MudTh>Finish</MudTh>
+                            <MudTh>%</MudTh>
+                            <MudTh>Assignee</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>
+                                <MudLink @onclick="@(() => OpenIssueAsync(context.Id))"
+                                         Style="font-family:monospace;cursor:pointer;">@_project.Key-@context.Number</MudLink>
+                            </MudTd>
+                            <MudTd>@context.Title</MudTd>
+                            <MudTd>@(context.StartDate?.ToString("yyyy-MM-dd") ?? "—")</MudTd>
+                            <MudTd>@(context.EndDate?.ToString("yyyy-MM-dd") ?? "—")</MudTd>
+                            <MudTd>@context.PercentComplete%</MudTd>
+                            <MudTd>@(context.AssigneeId is { } aid ? _userNames.GetValueOrDefault(aid, "?") : "")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    }
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    public enum ZoomLevel { Day, Week, Month }
+
+    private Project? _project;
+    private List<Issue> _issues = new();
+    private List<IssueLink> _allLinks = new();
+    private WorkflowView? _workflow;
+    private Dictionary<Guid, WorkflowStateCategory> _stateCategories = new();
+    private Dictionary<Guid, string> _stateNames = new();
+    private IReadOnlyList<UserSummary> _userList = Array.Empty<UserSummary>();
+    private Dictionary<Guid, string> _userNames = new();
+    private Dictionary<Guid, string?> _userAvatars = new();
+    private IReadOnlyDictionary<string, string> _tagStyles = new Dictionary<string, string>();
+
+    private IssueFilterDialog.IssueFilter _filter = new();
+    private ZoomLevel _zoom = ZoomLevel.Week;
+    private DateOnly _windowStart;
+    private DateOnly _windowEnd;
+    private DateOnly _today;
+    private HashSet<Guid> _collapsed = new();
+
+    private List<TimelineRow>? _visibleRows;
+    private List<Issue> _undatedRows = new();
+    private List<IssueLink> _visibleLinks = new();
+
+    private double PxPerDay => _zoom switch
+    {
+        ZoomLevel.Day => 60,
+        ZoomLevel.Week => 18,
+        ZoomLevel.Month => 6,
+        _ => 18,
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await Auth.GetAuthenticationStateAsync();
+        Guid.TryParse(authState.User.FindFirstValue(ClaimTypes.NameIdentifier), out var currentUserId);
+        var role = await Projects.GetRoleAsync(ProjectId, currentUserId, default);
+        if (role is null) { Nav.NavigateTo("/projects?denied=1"); return; }
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _project = await db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == ProjectId);
+        if (_project is null) return;
+
+        _issues = await db.Issues.AsNoTracking()
+            .Where(i => i.ProjectId == ProjectId)
+            .ToListAsync();
+        var issueIds = _issues.Select(i => i.Id).ToHashSet();
+        _allLinks = await db.IssueLinks.AsNoTracking()
+            .Where(l => issueIds.Contains(l.BlockerIssueId) && issueIds.Contains(l.BlockedIssueId))
+            .ToListAsync();
+
+        _workflow = await WorkflowsQueries.GetForProjectAsync(ProjectId, default);
+        _stateCategories = _workflow?.States.ToDictionary(s => s.Id, s => s.Category)
+            ?? new Dictionary<Guid, WorkflowStateCategory>();
+        _stateNames = _workflow?.States.ToDictionary(s => s.Id, s => s.Name) ?? new();
+
+        _userList = await Users.ListAllAsync(default);
+        _userNames = _userList.ToDictionary(u => u.Id, u => u.DisplayName);
+        _userAvatars = _userList.ToDictionary(u => u.Id, u => u.AvatarKey);
+        _tagStyles = await TagsService.GetStylesAsync(ProjectId, default);
+
+        _today = DateOnly.FromDateTime(Clock.UtcNow.UtcDateTime);
+        RebuildView();
+    }
+
+    private void RebuildView()
+    {
+        if (_project is null) return;
+
+        var filtered = _issues.Where(IssueMatchesFilter).ToList();
+
+        // WBS order (parents first, then children DFS).
+        var tree = WbsTree.Build(filtered);
+        var nodeById = tree.ToDictionary(n => n.IssueId);
+        var issueById = filtered.ToDictionary(i => i.Id);
+
+        // Skip rows whose parent (or any ancestor) is collapsed.
+        var hidden = new HashSet<Guid>();
+        foreach (var node in tree)
+        {
+            if (node.ParentId is { } pid && hidden.Contains(pid)) { hidden.Add(node.IssueId); continue; }
+            if (_collapsed.Contains(node.IssueId))
+            {
+                // Hide descendants but keep this row visible.
+                foreach (var c in node.ChildrenIds) hidden.Add(c);
+            }
+        }
+
+        var visibleNodes = tree.Where(n => !hidden.Contains(n.IssueId)).ToList();
+        var dated = new List<TimelineRow>();
+        var undated = new List<Issue>();
+        foreach (var n in visibleNodes)
+        {
+            var issue = issueById[n.IssueId];
+            if (issue.StartDate is null || issue.EndDate is null)
+                undated.Add(issue);
+            else
+                dated.Add(new TimelineRow(
+                    Issue: issue,
+                    Wbs: n.Wbs,
+                    Depth: n.Depth,
+                    HasChildren: n.ChildrenIds.Count > 0,
+                    IsCollapsed: _collapsed.Contains(n.IssueId)));
+        }
+
+        // Window auto-fit on dated rows; pad ±7 days for breathing room.
+        if (dated.Count > 0)
+        {
+            _windowStart = DateOnly.FromDateTime(dated.Min(r => r.Issue.StartDate!.Value.UtcDateTime)).AddDays(-7);
+            _windowEnd = DateOnly.FromDateTime(dated.Max(r => r.Issue.EndDate!.Value.UtcDateTime)).AddDays(7);
+        }
+        else
+        {
+            _windowStart = _today.AddDays(-7);
+            _windowEnd = _today.AddDays(7);
+        }
+
+        // Only render arrows whose endpoints are BOTH visible AND dated.
+        var datedIds = dated.Select(r => r.Issue.Id).ToHashSet();
+        _visibleLinks = _allLinks
+            .Where(l => datedIds.Contains(l.BlockerIssueId) && datedIds.Contains(l.BlockedIssueId))
+            .ToList();
+
+        _visibleRows = dated;
+        _undatedRows = undated;
+    }
+
+    private bool IssueMatchesFilter(Issue i)
+    {
+        if (!_filter.IsActive) return true;
+        if (_filter.Type is { } t && i.Type != t) return false;
+        if (_filter.WorkflowStateId is { } s && i.WorkflowStateId != s) return false;
+        if (_filter.Priority is { } p && i.Priority != p) return false;
+        if (_filter.AssigneeId is { } a)
+        {
+            if (a == Guid.Empty ? i.AssigneeId is not null : i.AssigneeId != a) return false;
+        }
+        if (!string.IsNullOrWhiteSpace(_filter.TitleContains)
+            && (i.Title ?? "").IndexOf(_filter.TitleContains!, StringComparison.OrdinalIgnoreCase) < 0)
+            return false;
+        return true;
+    }
+
+    private string AssigneeChipLabel(Guid id)
+        => id == Guid.Empty ? "(Unassigned)" : _userNames.GetValueOrDefault(id, "?");
+
+    private void SetZoom(ZoomLevel z) { _zoom = z; }
+
+    private void ToggleCollapsed(Guid id)
+    {
+        if (!_collapsed.Add(id)) _collapsed.Remove(id);
+        RebuildView();
+    }
+
+    private async Task OpenIssueAsync(Guid issueId)
+    {
+        var parameters = new DialogParameters<IssueEditDialog> { { x => x.IssueId, issueId } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<IssueEditDialog>("Edit issue", parameters, options);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled) return;
+        await ReloadAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OpenFilterAsync()
+    {
+        var parameters = new DialogParameters<IssueFilterDialog>
+        {
+            { x => x.Current, _filter },
+            { x => x.States, _workflow?.States ?? Array.Empty<WorkflowStateView>() },
+            { x => x.Users, _userList },
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<IssueFilterDialog>("Filter issues", parameters, options);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled) return;
+        if (result.Data is IssueFilterDialog.IssueFilter f)
+        {
+            _filter = f;
+            RebuildView();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void ClearFilter()
+    {
+        _filter = new IssueFilterDialog.IssueFilter();
+        RebuildView();
+    }
+}

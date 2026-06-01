@@ -1,0 +1,249 @@
+@using System.Globalization
+@using ProjectJA.Modules.Issues.Domain
+@using ProjectJA.Modules.Workflows.Domain
+
+@{
+    var totalDays = Math.Max(1, (WindowEnd.DayNumber - WindowStart.DayNumber));
+    var chartWidth = totalDays * PxPerDay;
+    var rowHeight = 30d;
+    var barHeight = 18d;
+    var headerHeight = 36d;
+    var totalHeight = headerHeight + Rows.Count * rowHeight + 12;
+    var sidebarWidth = 320d;
+}
+
+<div style="display:flex;align-items:stretch;min-width:@(sidebarWidth + chartWidth + 24)px;">
+
+    @* Left sidebar — key, title, assignee with indent + caret. Fixed pixel
+       column matches the chart's row height so SVG and HTML rows line up. *@
+    <div style="flex:0 0 @(sidebarWidth)px;border-right:1px solid var(--mud-palette-lines-default);">
+        <div style="height:@(headerHeight)px;padding:0.5rem 0.75rem;font-weight:600;background:var(--mud-palette-background-grey);border-bottom:1px solid var(--mud-palette-lines-default);">
+            Issue
+        </div>
+        @foreach (var row in Rows)
+        {
+            <div @key="row.Issue.Id"
+                 style="height:@(rowHeight)px;display:flex;align-items:center;border-bottom:1px solid var(--mud-palette-lines-default);padding:0 0.5rem;">
+                <span style="display:inline-block;width:@(row.Depth * 14)px;flex:0 0 @(row.Depth * 14)px;"></span>
+                @if (row.HasChildren)
+                {
+                    <MudIconButton Icon="@(row.IsCollapsed ? Icons.Material.Filled.ChevronRight : Icons.Material.Filled.ExpandMore)"
+                                   Size="Size.Small" Class="mr-1"
+                                   OnClick="@(() => OnToggleCollapsed.InvokeAsync(row.Issue.Id))"
+                                   title="@(row.IsCollapsed ? "Expand children" : "Collapse children")" />
+                }
+                else
+                {
+                    <span style="display:inline-block;width:28px;flex:0 0 28px;"></span>
+                }
+                <MudLink @onclick="@(() => OnBarClicked.InvokeAsync(row.Issue.Id))"
+                         Style="font-family:monospace;cursor:pointer;flex:0 0 5.5rem;">
+                    @ProjectKey-@row.Issue.Number
+                </MudLink>
+                <span style="flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.85rem;"
+                      title="@row.Issue.Title">
+                    @row.Issue.Title
+                </span>
+                @if (row.Issue.AssigneeId is { } aid && UserNamesById.TryGetValue(aid, out var aname))
+                {
+                    <span title="@aname" style="margin-left:0.25rem;">
+                        <UserAvatar AvatarKey="@UserAvatarsById.GetValueOrDefault(aid)"
+                                    DisplayName="@aname" Size="Size.Small" />
+                    </span>
+                }
+            </div>
+        }
+    </div>
+
+    @* Right side — SVG chart. *@
+    <div style="flex:1 1 auto;overflow-x:auto;">
+        <svg width="@chartWidth.ToString(CultureInfo.InvariantCulture)"
+             height="@totalHeight.ToString(CultureInfo.InvariantCulture)"
+             style="display:block;">
+            <defs>
+                <marker id="tlArrow" viewBox="0 0 10 10" refX="9" refY="5"
+                        markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--mud-palette-text-secondary)" />
+                </marker>
+                <marker id="tlArrowBroken" viewBox="0 0 10 10" refX="9" refY="5"
+                        markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--mud-palette-error)" />
+                </marker>
+            </defs>
+
+            @* Header strip — tick labels & vertical guide lines for the zoom level. *@
+            <g>
+                <rect x="0" y="0" width="@chartWidth.ToString(CultureInfo.InvariantCulture)" height="@headerHeight.ToString(CultureInfo.InvariantCulture)"
+                      fill="var(--mud-palette-background-grey)" />
+                <line x1="0" y1="@headerHeight.ToString(CultureInfo.InvariantCulture)"
+                      x2="@chartWidth.ToString(CultureInfo.InvariantCulture)"
+                      y2="@headerHeight.ToString(CultureInfo.InvariantCulture)"
+                      stroke="var(--mud-palette-lines-default)" />
+                @foreach (var tick in BuildTicks())
+                {
+                    <line x1="@tick.X.ToString(CultureInfo.InvariantCulture)" y1="0"
+                          x2="@tick.X.ToString(CultureInfo.InvariantCulture)" y2="@totalHeight.ToString(CultureInfo.InvariantCulture)"
+                          stroke="var(--mud-palette-lines-default)"
+                          stroke-dasharray="@(tick.Major ? "" : "2,3")" />
+                    @if (!string.IsNullOrEmpty(tick.Label))
+                    {
+                        <svg:text x="@((tick.X + 4).ToString(CultureInfo.InvariantCulture))" y="22"
+                              font-size="11" fill="var(--mud-palette-text-secondary)"
+                              style="font-family:var(--mud-typography-default-family, sans-serif);">@tick.Label</svg:text>
+                    }
+                }
+            </g>
+
+            @* Today line — only when in window. *@
+            @if (Today >= WindowStart && Today <= WindowEnd)
+            {
+                var tx = (Today.DayNumber - WindowStart.DayNumber) * PxPerDay;
+                <line x1="@tx.ToString(CultureInfo.InvariantCulture)" y1="@headerHeight.ToString(CultureInfo.InvariantCulture)"
+                      x2="@tx.ToString(CultureInfo.InvariantCulture)" y2="@totalHeight.ToString(CultureInfo.InvariantCulture)"
+                      stroke="var(--mud-palette-error)" stroke-width="1.5" stroke-dasharray="4,3" />
+                <svg:text x="@((tx + 4).ToString(CultureInfo.InvariantCulture))"
+                      y="@((headerHeight - 4).ToString(CultureInfo.InvariantCulture))"
+                      font-size="10" fill="var(--mud-palette-error)">today</svg:text>
+            }
+
+            @* Issue bars — one per visible row. *@
+            @{ var rowIndex = 0; }
+            @foreach (var row in Rows)
+            {
+                var (x, w) = BarGeometry(row.Issue);
+                var y = headerHeight + rowIndex * rowHeight + (rowHeight - barHeight) / 2;
+                var fill = CategoryFill(row.Issue.WorkflowStateId);
+                var done = CategoryDone(row.Issue.WorkflowStateId);
+                var progressW = Math.Max(0, w * row.Issue.PercentComplete / 100.0);
+                var tooltip = $"{ProjectKey}-{row.Issue.Number}  {row.Issue.Title}\n" +
+                              $"{row.Issue.StartDate:yyyy-MM-dd} → {row.Issue.EndDate:yyyy-MM-dd}  ({row.Issue.PercentComplete}%)";
+
+                <g @key="row.Issue.Id" style="cursor:pointer;" @onclick="@(() => OnBarClicked.InvokeAsync(row.Issue.Id))">
+                    <title>@tooltip</title>
+                    <rect x="@x.ToString(CultureInfo.InvariantCulture)" y="@y.ToString(CultureInfo.InvariantCulture)"
+                          width="@w.ToString(CultureInfo.InvariantCulture)" height="@barHeight.ToString(CultureInfo.InvariantCulture)"
+                          rx="3" ry="3" fill="@fill" opacity="0.35" stroke="@done" stroke-width="1" />
+                    @if (progressW > 0)
+                    {
+                        <rect x="@x.ToString(CultureInfo.InvariantCulture)" y="@y.ToString(CultureInfo.InvariantCulture)"
+                              width="@progressW.ToString(CultureInfo.InvariantCulture)" height="@barHeight.ToString(CultureInfo.InvariantCulture)"
+                              rx="3" ry="3" fill="@done" />
+                    }
+                    @if (w >= 60)
+                    {
+                        <svg:text x="@((x + 6).ToString(CultureInfo.InvariantCulture))"
+                              y="@((y + barHeight / 2 + 4).ToString(CultureInfo.InvariantCulture))"
+                              font-size="11" fill="var(--mud-palette-text-primary)"
+                              style="pointer-events:none;">@row.Issue.PercentComplete%</svg:text>
+                    }
+                </g>
+                rowIndex++;
+            }
+
+            @* Dependency arrows: blocker.end → blocked.start. *@
+            @{
+                var rowYByIssue = Rows
+                    .Select((r, i) => (r.Issue.Id, Y: headerHeight + i * rowHeight + rowHeight / 2))
+                    .ToDictionary(t => t.Id, t => t.Y);
+            }
+            @foreach (var link in Links)
+            {
+                if (!rowYByIssue.TryGetValue(link.BlockerIssueId, out var by)) continue;
+                if (!rowYByIssue.TryGetValue(link.BlockedIssueId, out var dy)) continue;
+                var blocker = Rows.First(r => r.Issue.Id == link.BlockerIssueId).Issue;
+                var blocked = Rows.First(r => r.Issue.Id == link.BlockedIssueId).Issue;
+                var (_, bw) = BarGeometry(blocker);
+                var (bx, _) = BarGeometry(blocker);
+                var (dxStart, _) = BarGeometry(blocked);
+                var x1 = bx + bw;
+                var x2 = dxStart;
+                var midX = (x1 + x2) / 2.0;
+                var broken = blocker.EndDate > blocked.StartDate;
+                var stroke = broken ? "var(--mud-palette-error)" : "var(--mud-palette-text-secondary)";
+                var marker = broken ? "url(#tlArrowBroken)" : "url(#tlArrow)";
+                var path = string.Create(CultureInfo.InvariantCulture,
+                    $"M {x1} {by} C {midX} {by} {midX} {dy} {x2} {dy}");
+                <path d="@path" fill="none" stroke="@stroke" stroke-width="1.2" marker-end="@marker" opacity="0.75" />
+            }
+        </svg>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<TimelineRow> Rows { get; set; } = Array.Empty<TimelineRow>();
+    [Parameter] public IReadOnlyList<IssueLink> Links { get; set; } = Array.Empty<IssueLink>();
+    [Parameter] public IReadOnlyDictionary<Guid, WorkflowStateCategory> StateCategoryById { get; set; } = new Dictionary<Guid, WorkflowStateCategory>();
+    [Parameter] public IReadOnlyDictionary<Guid, string> UserNamesById { get; set; } = new Dictionary<Guid, string>();
+    [Parameter] public IReadOnlyDictionary<Guid, string?> UserAvatarsById { get; set; } = new Dictionary<Guid, string?>();
+    [Parameter] public IReadOnlyDictionary<string, string> TagStyles { get; set; } = new Dictionary<string, string>();
+    [Parameter, EditorRequired] public string ProjectKey { get; set; } = "";
+    [Parameter, EditorRequired] public DateOnly WindowStart { get; set; }
+    [Parameter, EditorRequired] public DateOnly WindowEnd { get; set; }
+    [Parameter] public double PxPerDay { get; set; } = 18;
+    [Parameter] public DateOnly Today { get; set; }
+    [Parameter] public IReadOnlySet<Guid> Collapsed { get; set; } = new HashSet<Guid>();
+    [Parameter] public EventCallback<Guid> OnToggleCollapsed { get; set; }
+    [Parameter] public EventCallback<Guid> OnBarClicked { get; set; }
+
+    private record Tick(double X, string Label, bool Major);
+
+    private (double X, double Width) BarGeometry(Issue issue)
+    {
+        var start = DateOnly.FromDateTime(issue.StartDate!.Value.UtcDateTime);
+        var end = DateOnly.FromDateTime(issue.EndDate!.Value.UtcDateTime);
+        var x = (start.DayNumber - WindowStart.DayNumber) * PxPerDay;
+        // Bar includes the end-day, so add 1 to the day delta.
+        var w = Math.Max(PxPerDay, (end.DayNumber - start.DayNumber + 1) * PxPerDay);
+        return (x, w);
+    }
+
+    private string CategoryFill(Guid stateId) =>
+        StateCategoryById.TryGetValue(stateId, out var c) ? c switch
+        {
+            WorkflowStateCategory.Open => "#9e9e9e",
+            WorkflowStateCategory.InProgress => "#ffb300",
+            WorkflowStateCategory.Done => "#43a047",
+            _ => "#9e9e9e"
+        } : "#9e9e9e";
+
+    private string CategoryDone(Guid stateId) =>
+        StateCategoryById.TryGetValue(stateId, out var c) ? c switch
+        {
+            WorkflowStateCategory.Open => "#616161",
+            WorkflowStateCategory.InProgress => "#ef6c00",
+            WorkflowStateCategory.Done => "#2e7d32",
+            _ => "#616161"
+        } : "#616161";
+
+    private IEnumerable<Tick> BuildTicks()
+    {
+        // Major lines + labels per zoom: Day shows every day, Week shows Mondays,
+        // Month shows the 1st of each month. Faint dashed minor lines in between
+        // keep eyes from drifting on big spans.
+        if (PxPerDay >= 50)
+        {
+            for (var d = WindowStart; d <= WindowEnd; d = d.AddDays(1))
+                yield return new Tick((d.DayNumber - WindowStart.DayNumber) * PxPerDay,
+                    d.ToString("MMM d"), Major: true);
+        }
+        else if (PxPerDay >= 12)
+        {
+            for (var d = WindowStart; d <= WindowEnd; d = d.AddDays(1))
+            {
+                var x = (d.DayNumber - WindowStart.DayNumber) * PxPerDay;
+                var isMon = d.DayOfWeek == DayOfWeek.Monday;
+                yield return new Tick(x, isMon ? d.ToString("MMM d") : "", Major: isMon);
+            }
+        }
+        else
+        {
+            for (var d = WindowStart; d <= WindowEnd; d = d.AddDays(1))
+            {
+                var x = (d.DayNumber - WindowStart.DayNumber) * PxPerDay;
+                var isFirst = d.Day == 1;
+                if (isFirst)
+                    yield return new Tick(x, d.ToString("MMM yyyy"), Major: true);
+            }
+        }
+    }
+}

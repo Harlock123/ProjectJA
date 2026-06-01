@@ -43,6 +43,8 @@ else
                    StartIcon="@Icons.Material.Filled.Loop" Class="mr-2">Sprints</MudButton>
         <MudButton Href="@($"/projects/{ProjectId}/board")" Variant="Variant.Outlined" Color="Color.Primary"
                    StartIcon="@Icons.Material.Filled.ViewKanban" Class="mr-2">Board</MudButton>
+        <MudButton Href="@($"/projects/{ProjectId}/timeline")" Variant="Variant.Outlined" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Timeline" Class="mr-2">Timeline</MudButton>
         <MudButton OnClick="ExportXlsxAsync" Variant="Variant.Outlined"
                    Color="Color.Primary" StartIcon="@Icons.Material.Filled.FileDownload">Export xlsx</MudButton>
         @if (_isAdmin)
