@@ -1,0 +1,55 @@
+@using System.Globalization
+
+@if (_color is not null)
+{
+    <MudChip T="string" Size="@Size" Class="@Class"
+             Style="@($"background:{_color};color:{_contrast};border-color:{_color};")">
+        @Tag
+    </MudChip>
+}
+else
+{
+    <MudChip T="string" Size="@Size" Variant="Variant.Outlined" Class="@Class">@Tag</MudChip>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Tag { get; set; } = "";
+
+    /// <summary>Tag → background-hex map for the surrounding project. Pass the
+    /// same dictionary to every TagChip on a page so the lookup is free; load
+    /// it once via <c>ITagManagementService.GetStylesAsync</c>.</summary>
+    [Parameter] public IReadOnlyDictionary<string, string>? Styles { get; set; }
+
+    [Parameter] public Size Size { get; set; } = Size.Small;
+    [Parameter] public string? Class { get; set; }
+
+    private string? _color;
+    private string _contrast = "#000";
+
+    protected override void OnParametersSet()
+    {
+        _color = (Styles is not null && Styles.TryGetValue(Tag, out var hex)) ? hex : null;
+        _contrast = _color is null ? "#000" : ContrastFor(_color);
+    }
+
+    /// <summary>WCAG 2.x relative-luminance test. White text on the dark half,
+    /// black text on the light half — matches GitHub's issue-label heuristic.
+    /// Falls back to black on any parse failure.</summary>
+    private static string ContrastFor(string hex)
+    {
+        var s = hex.StartsWith('#') ? hex[1..] : hex;
+        if (s.Length < 6) return "#000";
+        if (!byte.TryParse(s.AsSpan(0, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var r)
+            || !byte.TryParse(s.AsSpan(2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var g)
+            || !byte.TryParse(s.AsSpan(4, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var b))
+            return "#000";
+        var l = 0.2126 * Linearise(r) + 0.7152 * Linearise(g) + 0.0722 * Linearise(b);
+        return l < 0.5 ? "#fff" : "#000";
+    }
+
+    private static double Linearise(byte channel)
+    {
+        var c = channel / 255.0;
+        return c <= 0.03928 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);
+    }
+}

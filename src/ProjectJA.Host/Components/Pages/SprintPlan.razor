@@ -5,6 +5,7 @@
 @using ProjectJA.Modules.Projects.Contracts
 @using ProjectJA.Modules.Projects.Domain
 @using ProjectJA.Modules.Issues.Domain
+@using ProjectJA.Modules.Issues.Contracts
 @using ProjectJA.SharedKernel.Audit
 @using ProjectJA.Host.Components.Dialogs
 @using ProjectJA.Host.Theming
@@ -15,6 +16,7 @@
 @inject AuthenticationStateProvider Auth
 @inject IProjectQueries Projects
 @inject ISprintQueries SprintsQueries
+@inject ITagManagementService TagsService
 @inject IAuditLog Audit
 @inject IDialogService DialogService
 @inject ThemeState ThemeState
@@ -107,6 +109,7 @@ else
     private bool _isAdmin;
     private IReadOnlyList<SprintSummary> _assignableSprints = Array.Empty<SprintSummary>();
     private Dictionary<Guid, string> _sprintNames = new();
+    private IReadOnlyDictionary<string, string> _tagStyles = new Dictionary<string, string>();
     private Guid? _selectedSprintId;
     private List<Issue> _backlog = new();
     private List<Issue> _inSprint = new();
@@ -145,6 +148,7 @@ else
         // Include every sprint in the name lookup — a card's SprintId could be
         // Completed in edge cases (and the chip should still show its name).
         _sprintNames = all.ToDictionary(s => s.Id, s => s.Name);
+        _tagStyles = await TagsService.GetStylesAsync(ProjectId, default);
         // Default the picker to the Active sprint if there is one, else the first Planned.
         _selectedSprintId ??= _assignableSprints.FirstOrDefault(s => s.Status == SprintStatus.Active)?.Id
                              ?? _assignableSprints.FirstOrDefault()?.Id;
@@ -256,7 +260,7 @@ else
                     }
                     @foreach (var lbl in i.Labels)
                     {
-                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@lbl</MudChip>
+                        <TagChip Tag="@lbl" Styles="_tagStyles" />
                     }
                 </div>
             }

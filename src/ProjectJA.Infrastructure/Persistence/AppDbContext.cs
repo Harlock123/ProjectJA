@@ -27,6 +27,7 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRo
     public DbSet<TenantOidcConfig> TenantOidcConfigs => Set<TenantOidcConfig>();
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<Sprint> Sprints => Set<Sprint>();
+    public DbSet<ProjectTagStyle> ProjectTagStyles => Set<ProjectTagStyle>();
     public DbSet<Workflow> Workflows => Set<Workflow>();
     public DbSet<Issue> Issues => Set<Issue>();
     public DbSet<IssueLink> IssueLinks => Set<IssueLink>();
@@ -44,6 +45,7 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRo
         modelBuilder.ApplyConfiguration(new TenantOidcConfigConfiguration());
         modelBuilder.ApplyConfiguration(new ProjectConfiguration());
         modelBuilder.ApplyConfiguration(new SprintConfiguration());
+        modelBuilder.ApplyConfiguration(new ProjectTagStyleConfiguration());
         modelBuilder.ApplyConfiguration(new WorkflowConfiguration());
         modelBuilder.ApplyConfiguration(new IssueConfiguration());
         modelBuilder.ApplyConfiguration(new IssueLinkConfiguration());

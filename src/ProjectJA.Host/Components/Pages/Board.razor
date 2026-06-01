@@ -11,6 +11,7 @@
 @using ProjectJA.Modules.Projects.Domain
 @using ProjectJA.Modules.Workflows.Contracts
 @using ProjectJA.Modules.Workflows.Domain
+@using ProjectJA.Modules.Issues.Contracts
 @inject AppDbContext Db
 @inject IClock Clock
 @inject ITenantContext Tenant
@@ -23,6 +24,7 @@
 @inject ISprintQueries SprintsQueries
 @inject ProjectJA.SharedKernel.Notifications.INotificationService Notifications
 @inject IUserQueries Users
+@inject ITagManagementService TagsService
 @inject IWorkflowQueries WorkflowsQueries
 @inject ISnackbar Snackbar
 @inject IJSRuntime JS
@@ -110,7 +112,7 @@ else
                                     }
                                     @foreach (var lbl in issue.Labels)
                                     {
-                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@lbl</MudChip>
+                                        <TagChip Tag="@lbl" Styles="_tagStyles" />
                                     }
                                 </div>
                             }
@@ -136,6 +138,7 @@ else
     private WorkflowView? _workflow;
     private IReadOnlyList<SprintSummary> _sprints = Array.Empty<SprintSummary>();
     private Dictionary<Guid, string> _sprintNames = new();
+    private IReadOnlyDictionary<string, string> _tagStyles = new Dictionary<string, string>();
     private Dictionary<Guid, UserSummary> _userById = new();
     private Guid _currentUserId;
     // Filter value conventions: "all" | "backlog" | "<sprint-guid>".
@@ -188,6 +191,7 @@ else
         _workflow = await WorkflowsQueries.GetForProjectAsync(ProjectId, default);
         _sprints = await SprintsQueries.ListForProjectAsync(ProjectId, default);
         _sprintNames = _sprints.ToDictionary(s => s.Id, s => s.Name);
+        _tagStyles = await TagsService.GetStylesAsync(ProjectId, default);
         // Used to render assignee avatars on cards. Org-wide pool is small in
         // practice; one query per board reload is fine.
         var users = await Users.ListAllAsync(default);

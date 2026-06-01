@@ -1,8 +1,9 @@
 @using ProjectJA.Modules.Issues.Contracts
+@using MudBlazor.Utilities
 @inject ITagManagementService Tags
 @inject IDialogService DialogService
 
-<MudDialog Style="min-width:36rem;">
+<MudDialog Style="min-width:52rem;height:max(95vh, 800px);">
     <TitleContent>
         <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
             <MudIcon Icon="@Icons.Material.Filled.Sell" />
@@ -21,33 +22,40 @@
         }
         else
         {
-            <div style="max-height:40vh;overflow:auto;">
-                <MudTable Items="_tags" Hover="true" Dense="true" FixedHeader="true"
-                          T="TagSummary"
-                          SelectedItem="_selected"
-                          SelectedItemChanged="@(s => OnSelected(s))">
-                    <HeaderContent>
-                        <MudTh>Tag</MudTh>
-                        <MudTh Style="width:8rem;text-align:right;">Issues</MudTh>
-                    </HeaderContent>
-                    <RowTemplate>
-                        <MudTd>
-                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@context.Tag</MudChip>
-                        </MudTd>
-                        <MudTd Style="text-align:right;">@context.IssueCount</MudTd>
-                    </RowTemplate>
-                </MudTable>
-            </div>
+            @* Vertical flex column inside the dialog content area. The tag
+               table grows to absorb whatever space the selected-tag panel
+               (and its copy sub-panel) don't claim — so an empty selection
+               makes the list fill the dialog, while editing/copying modes
+               shrink the list and put the controls in view automatically. *@
+            <div style="display:flex;flex-direction:column;height:calc(max(95vh, 800px) - 9rem);gap:0.75rem;">
+                <div style="flex:1 1 auto;min-height:6rem;overflow:auto;">
+                    <MudTable Items="_tags" Hover="true" Dense="true" FixedHeader="true"
+                              T="TagSummary"
+                              SelectedItem="_selected"
+                              SelectedItemChanged="@(s => OnSelected(s))">
+                        <HeaderContent>
+                            <MudTh>Tag</MudTh>
+                            <MudTh Style="width:8rem;text-align:right;">Issues</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>
+                                <TagChip Tag="@context.Tag" Styles="_styles" />
+                            </MudTd>
+                            <MudTd Style="text-align:right;">@context.IssueCount</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </div>
 
             @if (_selected is not null)
             {
                 <MudPaper Class="pa-3 mt-3" Outlined="true">
-                    <MudText Typo="Typo.subtitle2" GutterBottom="true">
-                        Selected: <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">@_selected.Tag</MudChip>
-                        <MudText Inline="true" Typo="Typo.body2" Color="Color.Default">
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+                        <MudText Typo="Typo.subtitle2">Selected:</MudText>
+                        <TagChip Tag="@_selected.Tag" Styles="_styles" />
+                        <MudText Typo="Typo.body2" Color="Color.Default">
                             on @_selected.IssueCount issue@(_selected.IssueCount == 1 ? "" : "s")
                         </MudText>
-                    </MudText>
+                    </MudStack>
                     <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Start">
                         <MudTextField @bind-Value="_renameTo" Label="Rename to"
                                       Variant="Variant.Outlined" Margin="Margin.Dense"
@@ -63,6 +71,79 @@
                             Remove from all
                         </MudButton>
                     </MudStack>
+
+                    <MudDivider Class="my-3" />
+
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                        <MudColorPicker @bind-Value="_pickedColor"
+                                        Label="Background color" Variant="Variant.Outlined"
+                                        Margin="Margin.Dense"
+                                        ColorPickerView="ColorPickerView.Spectrum" />
+                        <MudButton OnClick="SaveColorAsync" Variant="Variant.Filled" Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Palette"
+                                   Disabled="@(_busy || _pickedColor is null)">
+                            SAVE
+                        </MudButton>
+                        <MudButton OnClick="RippleSaveAsync" Variant="Variant.Filled" Color="Color.Secondary"
+                                   StartIcon="@Icons.Material.Filled.Waves"
+                                   title="Apply the new color to every tag that currently shares this tag's color"
+                                   Disabled="@(_busy || _pickedColor is null || !_styles.ContainsKey(_selected.Tag))">
+                            RIPPLE
+                        </MudButton>
+                        <MudButton OnClick="ResetColorAsync" Variant="Variant.Outlined" Color="Color.Default"
+                                   StartIcon="@Icons.Material.Filled.FormatColorReset"
+                                   Disabled="@(_busy || !_styles.ContainsKey(_selected.Tag))">
+                            RESET
+                        </MudButton>
+                        @if (_styles.ContainsKey(_selected.Tag))
+                        {
+                            <MudButton OnClick="@(() => _copyOpen = !_copyOpen)" Variant="Variant.Text" Color="Color.Primary"
+                                       StartIcon="@(_copyOpen ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ContentCopy)">
+                                COPY
+                            </MudButton>
+                        }
+                    </MudStack>
+                    <MudText Typo="Typo.caption" Color="Color.Default" Class="mt-1">
+                        Text colour is auto-picked for contrast against the chosen background.
+                    </MudText>
+
+                    @if (_copyOpen && _styles.ContainsKey(_selected.Tag))
+                    {
+                        var others = _tags.Where(t => !string.Equals(t.Tag, _selected.Tag, StringComparison.OrdinalIgnoreCase)).ToList();
+                        <MudDivider Class="my-2" />
+                        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-1">
+                            <MudText Typo="Typo.subtitle2">Apply this color to:</MudText>
+                            <MudSpacer />
+                            <MudButton Size="Size.Small" OnClick="@(() => SetAllCopyTargets(true))" Disabled="@_busy">All</MudButton>
+                            <MudButton Size="Size.Small" OnClick="@(() => SetAllCopyTargets(false))" Disabled="@_busy">None</MudButton>
+                        </MudStack>
+                        <div style="max-height:18vh;overflow:auto;border:1px solid var(--mud-palette-lines-default);padding:0.5rem;border-radius:4px;">
+                            @foreach (var t in others)
+                            {
+                                <div style="display:flex;align-items:center;gap:0.5rem;padding:0.15rem 0;">
+                                    <MudCheckBox T="bool"
+                                                 Value="_copyChecked.Contains(t.Tag)"
+                                                 ValueChanged="@(v => ToggleCopyTarget(t.Tag, v))"
+                                                 Dense="true" />
+                                    <TagChip Tag="@t.Tag" Styles="_styles" />
+                                    <MudText Typo="Typo.caption" Color="Color.Default">@t.IssueCount</MudText>
+                                </div>
+                            }
+                            @if (others.Count == 0)
+                            {
+                                <MudText Color="Color.Default">No other tags in this project to copy onto.</MudText>
+                            }
+                        </div>
+                        <MudStack Row="true" Spacing="2" Class="mt-2">
+                            <MudSpacer />
+                            <MudButton OnClick="@(() => { _copyOpen = false; _copyChecked.Clear(); })" Disabled="@_busy">Cancel</MudButton>
+                            <MudButton OnClick="ApplyCopyAsync" Variant="Variant.Filled" Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.ContentCopy"
+                                       Disabled="@(_busy || _copyChecked.Count == 0)">
+                                Apply to @_copyChecked.Count
+                            </MudButton>
+                        </MudStack>
+                    }
                 </MudPaper>
             }
 
@@ -74,6 +155,7 @@
             {
                 <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert>
             }
+            </div>
         }
     </DialogContent>
     <DialogActions>
@@ -89,8 +171,12 @@
     private bool _busy;
     private bool _changed;
     private List<TagSummary> _tags = new();
+    private IReadOnlyDictionary<string, string> _styles = new Dictionary<string, string>();
     private TagSummary? _selected;
     private string _renameTo = "";
+    private MudColor? _pickedColor;
+    private bool _copyOpen;
+    private readonly HashSet<string> _copyChecked = new(StringComparer.OrdinalIgnoreCase);
     private string? _status;
     private string? _error;
     private Severity _statusSeverity = Severity.Success;
@@ -105,10 +191,14 @@
         {
             var list = await Tags.ListForProjectAsync(ProjectId, default);
             _tags = list.ToList();
+            _styles = await Tags.GetStylesAsync(ProjectId, default);
             // Preserve selection across reload if the tag still exists, else
             // pick the renamed value when we know it.
             if (_selected is not null)
+            {
                 _selected = _tags.FirstOrDefault(t => string.Equals(t.Tag, _selected.Tag, StringComparison.OrdinalIgnoreCase));
+                SyncPickerFromSelection();
+            }
         }
         catch (Exception ex) { _error = $"Couldn't load tags: {ex.Message}"; }
         finally { _loading = false; }
@@ -120,6 +210,118 @@
         _renameTo = s?.Tag ?? "";
         _status = null;
         _error = null;
+        // Reset the copy sub-flow whenever the source tag changes — the
+        // checked destinations belonged to the previous source.
+        _copyOpen = false;
+        _copyChecked.Clear();
+        SyncPickerFromSelection();
+    }
+
+    private void SyncPickerFromSelection()
+    {
+        if (_selected is not null && _styles.TryGetValue(_selected.Tag, out var hex))
+            _pickedColor = new MudColor(hex);
+        else
+            _pickedColor = null;
+    }
+
+    private async Task SaveColorAsync()
+    {
+        if (_selected is null || _pickedColor is null) return;
+        _error = null;
+        _status = null;
+        _busy = true;
+        try
+        {
+            // MudColor.Value is already the hex string ("#rrggbbaa"); strip
+            // the alpha byte so the persisted style is a plain #RRGGBB.
+            var raw = (_pickedColor.Value ?? "#000000").TrimStart('#');
+            var hex = "#" + (raw.Length >= 6 ? raw[..6] : raw.PadRight(6, '0'));
+            await Tags.SetStyleAsync(ProjectId, _selected.Tag, hex, default);
+            _status = $"Saved color {hex} for '{_selected.Tag}'.";
+            _statusSeverity = Severity.Success;
+            _changed = true;
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = $"Save color failed: {ex.Message}"; }
+        finally { _busy = false; }
+    }
+
+    private void ToggleCopyTarget(string tag, bool isChecked)
+    {
+        if (isChecked) _copyChecked.Add(tag);
+        else _copyChecked.Remove(tag);
+    }
+
+    private void SetAllCopyTargets(bool all)
+    {
+        _copyChecked.Clear();
+        if (!all || _selected is null) return;
+        foreach (var t in _tags)
+            if (!string.Equals(t.Tag, _selected.Tag, StringComparison.OrdinalIgnoreCase))
+                _copyChecked.Add(t.Tag);
+    }
+
+    private async Task ApplyCopyAsync()
+    {
+        if (_selected is null || _copyChecked.Count == 0) return;
+        _error = null;
+        _status = null;
+        _busy = true;
+        try
+        {
+            var n = await Tags.CopyStyleAsync(ProjectId, _selected.Tag, _copyChecked.ToList(), default);
+            _status = $"Copied '{_selected.Tag}' color to {n} tag{(n == 1 ? "" : "s")}.";
+            _statusSeverity = Severity.Success;
+            _changed = true;
+            _copyChecked.Clear();
+            _copyOpen = false;
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = $"Copy failed: {ex.Message}"; }
+        finally { _busy = false; }
+    }
+
+    private async Task RippleSaveAsync()
+    {
+        if (_selected is null || _pickedColor is null) return;
+        if (!_styles.ContainsKey(_selected.Tag)) return; // RIPPLE requires a previous color
+        _error = null;
+        _status = null;
+        _busy = true;
+        try
+        {
+            // Same hex normalisation as SaveColorAsync — strip alpha to keep
+            // the persisted style a plain #RRGGBB.
+            var raw = (_pickedColor.Value ?? "#000000").TrimStart('#');
+            var hex = "#" + (raw.Length >= 6 ? raw[..6] : raw.PadRight(6, '0'));
+            var n = await Tags.RippleAsync(ProjectId, _selected.Tag, hex, default);
+            _status = $"Rippled {hex} to {n} tag{(n == 1 ? "" : "s")} that shared the previous color.";
+            _statusSeverity = Severity.Success;
+            _changed = true;
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = $"Ripple failed: {ex.Message}"; }
+        finally { _busy = false; }
+    }
+
+    private async Task ResetColorAsync()
+    {
+        if (_selected is null) return;
+        _error = null;
+        _status = null;
+        _busy = true;
+        try
+        {
+            await Tags.ClearStyleAsync(ProjectId, _selected.Tag, default);
+            _status = $"Color cleared for '{_selected.Tag}'.";
+            _statusSeverity = Severity.Info;
+            _pickedColor = null;
+            _changed = true;
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _error = $"Reset failed: {ex.Message}"; }
+        finally { _busy = false; }
     }
 
     private async Task RenameAsync()

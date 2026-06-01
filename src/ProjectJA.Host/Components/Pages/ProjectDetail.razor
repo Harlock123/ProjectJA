@@ -7,8 +7,10 @@
 @using ProjectJA.Modules.Projects.Domain
 @using ProjectJA.Modules.Workflows.Contracts
 @using ProjectJA.Modules.Workflows.Domain
+@using ProjectJA.Modules.Issues.Contracts
 @using ProjectJA.Host.Components.Dialogs
 @inject AppDbContext Db
+@inject ITagManagementService TagsService
 @inject IClock Clock
 @inject NavigationManager Nav
 @inject AuthenticationStateProvider Auth
@@ -146,7 +148,7 @@ else
                                     <div class="mt-1">
                                         @foreach (var lbl in context.Labels)
                                         {
-                                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="mr-1">@lbl</MudChip>
+                                            <TagChip Tag="@lbl" Styles="_tagStyles" Class="mr-1" />
                                         }
                                     </div>
                                 }
@@ -287,6 +289,7 @@ else
     private string? _error;
     private IssueFilterDialog.IssueFilter _filter = new();
     private bool _rightPanelOpen = true;
+    private IReadOnlyDictionary<string, string> _tagStyles = new Dictionary<string, string>();
 
     private string NullableUserToString(Guid? id) =>
         id is null ? "" : (_users.FirstOrDefault(u => u.Id == id)?.DisplayName ?? "");
@@ -323,6 +326,7 @@ else
         _stateNames = _workflow?.States.ToDictionary(s => s.Id, s => s.Name) ?? new();
         _sprints = await SprintsQueries.ListForProjectAsync(ProjectId, default);
         _sprintNames = _sprints.ToDictionary(s => s.Id, s => s.Name);
+        _tagStyles = await TagsService.GetStylesAsync(ProjectId, default);
     }
 
     private IEnumerable<Issue> ApplyFilter(IEnumerable<Issue>? source)
