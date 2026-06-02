@@ -122,15 +122,43 @@ else
                 }
                 else
                 {
-                    <MudTable Items="filteredIssues" Hover="true" Dense="true">
+                    <MudTable Items="filteredIssues" Hover="true" Dense="true" T="Issue">
                         <HeaderContent>
-                            <MudTh>Key</MudTh>
-                            <MudTh>Type</MudTh>
-                            <MudTh>Priority</MudTh>
-                            <MudTh>Title</MudTh>
-                            <MudTh Style="width:5rem;">Pts</MudTh>
-                            <MudTh>Status</MudTh>
-                            <MudTh>Updated</MudTh>
+                            <MudTh>
+                                <MudTableSortLabel T="Issue" SortLabel="key"
+                                                   InitialDirection="SortDirection.Ascending"
+                                                   SortBy="@(new Func<Issue, object>(i => i.Number))">Key</MudTableSortLabel>
+                            </MudTh>
+                            <MudTh>
+                                <MudTableSortLabel T="Issue" SortLabel="type"
+                                                   SortBy="@(new Func<Issue, object>(i => i.Type.ToString()))">Type</MudTableSortLabel>
+                            </MudTh>
+                            <MudTh>
+                                @* Descending default so Critical surfaces first; users still
+                                   click to flip to ascending if they want. *@
+                                <MudTableSortLabel T="Issue" SortLabel="priority"
+                                                   SortBy="@(new Func<Issue, object>(i => (int)i.Priority))">Priority</MudTableSortLabel>
+                            </MudTh>
+                            <MudTh>
+                                <MudTableSortLabel T="Issue" SortLabel="title"
+                                                   SortBy="@(new Func<Issue, object>(i => i.Title ?? string.Empty))">Title</MudTableSortLabel>
+                            </MudTh>
+                            <MudTh Style="width:5rem;">
+                                @* Nulls last on either direction — sentinel int.MinValue would
+                                   surface them first on descending. Mapping null → int.MaxValue
+                                   on ascending and int.MinValue on descending would need a
+                                   custom comparer; keeping it simple here. *@
+                                <MudTableSortLabel T="Issue" SortLabel="points"
+                                                   SortBy="@(new Func<Issue, object>(i => i.Points ?? int.MaxValue))">Pts</MudTableSortLabel>
+                            </MudTh>
+                            <MudTh>
+                                <MudTableSortLabel T="Issue" SortLabel="status"
+                                                   SortBy="@(new Func<Issue, object>(i => _stateNames.GetValueOrDefault(i.WorkflowStateId, "?")))">Status</MudTableSortLabel>
+                            </MudTh>
+                            <MudTh>
+                                <MudTableSortLabel T="Issue" SortLabel="updated"
+                                                   SortBy="@(new Func<Issue, object>(i => i.UpdatedAt))">Updated</MudTableSortLabel>
+                            </MudTh>
                             <MudTh Style="width:3rem;"></MudTh>
                         </HeaderContent>
                         <RowTemplate>
