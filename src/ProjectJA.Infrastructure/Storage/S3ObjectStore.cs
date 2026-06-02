@@ -10,6 +10,7 @@ internal sealed class S3ObjectStore(IAmazonS3 client, IOptions<StorageOptions> o
 {
     private readonly string _bucket = options.Value.Bucket
         ?? throw new InvalidOperationException("Storage:Bucket is not configured.");
+    private readonly string? _endpoint = options.Value.Endpoint;
 
     public async Task PutAsync(string key, Stream content, string contentType, CancellationToken ct)
     {
@@ -35,6 +36,7 @@ internal sealed class S3ObjectStore(IAmazonS3 client, IOptions<StorageOptions> o
             Verb = HttpVerb.PUT,
             ContentType = contentType,
             Expires = expires,
+            Protocol = EndpointProtocol(_endpoint),
         };
         var url = client.GetPreSignedURL(req);
         return Task.FromResult(new PresignedUrl(new Uri(url), new DateTimeOffset(expires)));
@@ -49,10 +51,16 @@ internal sealed class S3ObjectStore(IAmazonS3 client, IOptions<StorageOptions> o
             Key = key,
             Verb = HttpVerb.GET,
             Expires = expires,
+            Protocol = EndpointProtocol(_endpoint),
         };
         var url = client.GetPreSignedURL(req);
         return Task.FromResult(new PresignedUrl(new Uri(url), new DateTimeOffset(expires)));
     }
+
+    private static Protocol EndpointProtocol(string? endpoint) =>
+        endpoint is not null && endpoint.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            ? Protocol.HTTP
+            : Protocol.HTTPS;
 
     public Task DeleteAsync(string key, CancellationToken ct)
         => client.DeleteObjectAsync(_bucket, key, ct);

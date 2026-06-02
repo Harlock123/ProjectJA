@@ -351,6 +351,7 @@ else
     private string? _error;
     private string? _saveError;
     private bool _canWrite;
+    private bool _uploadBound;
     private Guid _currentUserId;
     private DotNetObjectReference<IssueDetail>? _selfRef;
 
@@ -397,9 +398,9 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // Only Members+ get the upload input rendered, so only then bind it.
-        if (firstRender && _issue is not null && _canWrite)
+        if (_issue is not null && _canWrite && !_uploadBound)
         {
+            _uploadBound = true;
             _selfRef = DotNetObjectReference.Create(this);
             await JS.InvokeVoidAsync("projectja.uploads.init", _selfRef, "upload-input", IssueId);
         }
@@ -598,16 +599,24 @@ else
     [JSInvokable]
     public async Task OnUploadComplete(Guid attachmentId)
     {
-        _error = null;
-        await ReloadAsync();
-        await InvokeAsync(StateHasChanged);
+        await InvokeAsync(async () =>
+        {
+            _error = null;
+            _uploadBound = false;
+            var list = await Attachments.ListAsync(IssueId, default);
+            _attachments = list.ToList();
+            StateHasChanged();
+        });
     }
 
     [JSInvokable]
-    public Task OnUploadError(string message)
+    public async Task OnUploadError(string message)
     {
-        _error = $"Upload failed: {message}";
-        return InvokeAsync(StateHasChanged);
+        await InvokeAsync(() =>
+        {
+            _error = $"Upload failed: {message}";
+            StateHasChanged();
+        });
     }
 
     private async Task DownloadAsync(Guid attachmentId)

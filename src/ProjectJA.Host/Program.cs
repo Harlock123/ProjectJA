@@ -227,7 +227,8 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+    app.UseHttpsRedirection();
 
 // Tenant resolution must run BEFORE authentication on every request: ASP.NET Identity's
 // cookie validator reloads the user from AppDbContext on every request (including for

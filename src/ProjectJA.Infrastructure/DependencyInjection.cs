@@ -96,11 +96,13 @@ public static class InfrastructureServiceCollectionExtensions
                 var opts = sp.GetRequiredService<IOptions<StorageOptions>>().Value;
                 var credentials = new BasicAWSCredentials(
                     opts.AccessKey ?? string.Empty, opts.SecretKey ?? string.Empty);
+                var endpointUri = new Uri(opts.Endpoint!);
                 var config = new AmazonS3Config
                 {
                     ServiceURL = opts.Endpoint,
                     ForcePathStyle = opts.ForcePathStyle,
                     AuthenticationRegion = opts.Region,
+                    UseHttp = endpointUri.Scheme == "http",
                 };
                 return new AmazonS3Client(credentials, config);
             });
