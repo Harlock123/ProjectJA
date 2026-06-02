@@ -2,20 +2,41 @@
 
 ## One-time setup
 
-**1. Start Postgres.** The app needs it at startup (bootstrap creates the schema). Easiest way — Docker:
+**1. Start the dev dependencies.** The app needs Postgres at startup (bootstrap creates the schema) and an S3-compatible object store for issue attachments. Both are wired up in `deploy/docker-compose.dev.yml` — Postgres + MinIO + a one-shot bucket-create step:
 
 ```sh
-docker run --rm -d --name projectja-pg \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=projectja \
-  -p 5432:5432 \
-  -v projectja-pgdata:/var/lib/postgresql/data \
-  postgres:16-alpine
+docker compose -f deploy/docker-compose.dev.yml up -d
 ```
 
-The default connection string already points at `localhost:5432` with user `postgres` / pass `postgres`, so no config changes needed.
+That brings up:
+- Postgres on `localhost:5432` with user `postgres` / pass `postgres` (matches the default connection string — no config changes needed).
+- MinIO on `localhost:9000` (S3 API) + `localhost:9001` (console, login `minioadmin` / `minioadmin`) with a `projectja-attachments` bucket and browser CORS open for dev.
 
-`--rm` removes the *container* on stop, but the named volume `projectja-pgdata` is independent — your data (projects, issues, users) survives a `docker stop` / restart. The first run still bootstraps the schema + seed admin; later runs find the existing data and skip re-seeding.
+Data lives in named volumes `projectja-pgdata` and `projectja-miniodata`, so it survives `docker compose down`. To wipe and start over: `docker compose -f deploy/docker-compose.dev.yml down -v`.
+
+**Storage config for the app.** Add this to `src/ProjectJA.Host/appsettings.Development.json` (or export the equivalent `Storage__*` env vars before `dotnet run`):
+
+```json
+{
+  "Storage": {
+    "Endpoint": "http://localhost:9000",
+    "Bucket": "projectja-attachments",
+    "AccessKey": "minioadmin",
+    "SecretKey": "minioadmin",
+    "ForcePathStyle": true,
+    "Region": "us-east-1"
+  }
+}
+```
+
+Without these keys the app falls back to `NullObjectStore` and attachment uploads return a 500 with *"Object storage is not configured"*.
+
+**Upgrading from a prior standalone `docker run -d --name projectja-pg ...` setup:** stop and remove that container first, then the compose Postgres reuses the same `projectja-pgdata` volume so every existing project / issue / user carries over:
+
+```sh
+docker stop projectja-pg && docker rm projectja-pg
+docker compose -f deploy/docker-compose.dev.yml up -d
+```
 
 **2. Open the solution.** `File → Open` → pick `ProjectJA.sln` at the repo root. Rider will detect the 16 projects.
 

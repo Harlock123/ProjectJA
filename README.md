@@ -296,17 +296,42 @@ Tests cover: anonymous routing (smoke), bootstrap state (default tenant + org + 
 ### Running locally (on-prem mode)
 
 ```sh
-# Start a Postgres (named volume keeps data across container restarts):
-docker run --rm -d --name projectja-pg \
-  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=projectja \
-  -p 5432:5432 -v projectja-pgdata:/var/lib/postgresql/data \
-  postgres:16-alpine
+# Bring up the dev dependencies (Postgres + MinIO + bucket bootstrap):
+docker compose -f deploy/docker-compose.dev.yml up -d
 
 # Run the app:
 dotnet run --project src/ProjectJA.Host
 ```
 
-Default credentials seeded on first run: `admin@projectja.local` / `ChangeMe123!` (override via the `Bootstrap:*` configuration keys). `--rm` only drops the container — data lives in the `projectja-pgdata` volume and survives restarts; to wipe and re-bootstrap a clean DB: `docker rm -f projectja-pg && docker volume rm projectja-pgdata`.
+`deploy/docker-compose.dev.yml` is the recommended one-liner for dev now — it stands up `postgres:16-alpine` on `localhost:5432` *and* MinIO on `localhost:9000` (S3 API) + `localhost:9001` (console, login `minioadmin`/`minioadmin`), then runs a one-shot `mc` init container that creates the `projectja-attachments` bucket and marks it readable. MinIO is started with `MINIO_API_CORS_ALLOW_ORIGIN: "*"` so the browser-side direct-PUT uploads from the Issue dialog work without extra CORS plumbing — fine for dev, scope it down on prod.
+
+Data persists in two named volumes — `projectja-pgdata` (intentionally the same name as the older standalone `docker run` setup so existing installs carry over with **no migration**: stop and remove the old container, then `docker compose -f deploy/docker-compose.dev.yml up -d` and every project, issue, user, and audit row stays put) and `projectja-miniodata`. Wipe both with `docker compose -f deploy/docker-compose.dev.yml down -v`.
+
+**Storage config the app reads** — without it the `IObjectStore` resolves to `NullObjectStore` and attachment uploads return a 500 with *"Object storage is not configured."*. Drop this into `src/ProjectJA.Host/appsettings.Development.json` (or export the equivalent `Storage__*` env vars):
+
+```json
+{
+  "Storage": {
+    "Endpoint": "http://localhost:9000",
+    "Bucket": "projectja-attachments",
+    "AccessKey": "minioadmin",
+    "SecretKey": "minioadmin",
+    "ForcePathStyle": true,
+    "Region": "us-east-1"
+  }
+}
+```
+
+Default user credentials seeded on first run: `admin@projectja.local` / `ChangeMe123!` (override via the `Bootstrap:*` configuration keys).
+
+**Upgrading from the old standalone `docker run -d --name projectja-pg ...` setup:**
+
+```sh
+docker stop projectja-pg && docker rm projectja-pg
+docker compose -f deploy/docker-compose.dev.yml up -d
+```
+
+Your existing `projectja-pgdata` volume is re-attached as-is — the compose file names its Postgres volume explicitly to match. The only thing new on the system is MinIO + the attachments bucket.
 
 ### Inspecting the database
 
