@@ -1,0 +1,268 @@
+@using ProjectJA.Modules.Identity.Contracts
+@using ProjectJA.Modules.Issues.Contracts
+@using ProjectJA.Modules.Issues.Domain
+@using ProjectJA.Modules.Projects.Contracts
+@using ProjectJA.Modules.Projects.Domain
+@using ProjectJA.Modules.Workflows.Contracts
+@using ProjectJA.Modules.Workflows.Domain
+@inject IBulkIssueOps Bulk
+
+<MudDialog Style="min-width:34rem;">
+    <TitleContent>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudIcon Icon="@TitleIcon()" />
+            <MudText Typo="Typo.h6">@TitleText() — @IssueIds.Count issue(s)</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="3">
+            @switch (Mode)
+            {
+                case BulkMode.Assign:
+                    <MudSelect T="Guid?" Label="Assignee" @bind-Value="_assigneeId"
+                               Variant="Variant.Outlined" Dense="true" Clearable="true"
+                               ToStringFunc="UserName">
+                        <MudSelectItem T="Guid?" Value="@((Guid?)null)">(Unassigned)</MudSelectItem>
+                        @foreach (var u in Users)
+                        {
+                            <MudSelectItem T="Guid?" Value="@((Guid?)u.Id)">
+                                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                                    <UserAvatar AvatarKey="@u.AvatarKey" DisplayName="@u.DisplayName" Size="Size.Small" />
+                                    <span>@u.DisplayName</span>
+                                </MudStack>
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+                    break;
+
+                case BulkMode.Sprint:
+                    <MudSelect T="Guid?" Label="Sprint" @bind-Value="_sprintId"
+                               Variant="Variant.Outlined" Dense="true" Clearable="true"
+                               ToStringFunc="SprintName"
+                               HelperText="Empty = backlog. Completed sprints aren't allowed.">
+                        <MudSelectItem T="Guid?" Value="@((Guid?)null)">(Backlog)</MudSelectItem>
+                        @foreach (var s in Sprints.Where(s => s.Status != SprintStatus.Completed))
+                        {
+                            <MudSelectItem T="Guid?" Value="@s.Id">@s.Name (@s.Status)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    break;
+
+                case BulkMode.AddTag:
+                    <MudTextField @bind-Value="_tag" Label="Tag to add"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  MaxLength="40" Immediate="true"
+                                  HelperText="Tag normalisation applies per-issue (trim, 40 chars, dedupe)." />
+                    break;
+
+                case BulkMode.RemoveTag:
+                    @if (ExistingTags.Count == 0)
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true">
+                            None of the selected issues carry any tags.
+                        </MudAlert>
+                    }
+                    else
+                    {
+                        <MudSelect T="string" Label="Tag to remove" @bind-Value="_tag"
+                                   Variant="Variant.Outlined" Dense="true">
+                            @foreach (var t in ExistingTags)
+                            {
+                                <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
+                    break;
+
+                case BulkMode.Transition:
+                    <MudSelect T="Guid" Label="Target state" @bind-Value="_targetStateId"
+                               Variant="Variant.Outlined" Dense="true"
+                               HelperText="Rejections by workflow matrix are reported per issue and don't stop the rest of the batch.">
+                        @foreach (var s in States.OrderBy(s => s.Order))
+                        {
+                            <MudSelectItem T="Guid" Value="@s.Id">@s.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                    break;
+            }
+
+            @if (Mode is BulkMode.Assign or BulkMode.Sprint or BulkMode.Transition)
+            {
+                <MudCheckBox T="bool" @bind-Value="_notify" Color="Color.Primary" Dense="true">
+                    Also send notifications to affected users
+                </MudCheckBox>
+                <MudText Typo="Typo.caption" Color="Color.Default">
+                    Default: off. Bulk actions can spam the bell when one click touches many issues.
+                </MudText>
+            }
+
+            @if (_status is not null)
+            {
+                <MudAlert Severity="@_statusSeverity" Dense="true">@_status</MudAlert>
+            }
+            @if (_failed.Count > 0)
+            {
+                <MudExpansionPanels>
+                    <MudExpansionPanel Text="@($"Rejected ({_failed.Count})")">
+                        <MudList T="BulkTransitionFailure" Dense="true">
+                            @foreach (var f in _failed)
+                            {
+                                <MudListItem T="BulkTransitionFailure" Value="f">
+                                    <MudText Typo="Typo.body2">@IssueLabel(f.IssueId) — @f.Reason</MudText>
+                                </MudListItem>
+                            }
+                        </MudList>
+                    </MudExpansionPanel>
+                </MudExpansionPanels>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton OnClick="ApplyAsync" Variant="Variant.Filled" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.PlayArrow"
+                   Disabled="@(_busy || !CanApply())">Apply</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    public enum BulkMode { Assign, Sprint, AddTag, RemoveTag, Transition }
+
+    [Parameter, EditorRequired] public BulkMode Mode { get; set; }
+    [Parameter, EditorRequired] public Guid ProjectId { get; set; }
+    [Parameter, EditorRequired] public Guid ActorId { get; set; }
+    [Parameter, EditorRequired] public IReadOnlyList<Guid> IssueIds { get; set; } = Array.Empty<Guid>();
+    [Parameter] public IReadOnlyList<UserSummary> Users { get; set; } = Array.Empty<UserSummary>();
+    [Parameter] public IReadOnlyList<SprintSummary> Sprints { get; set; } = Array.Empty<SprintSummary>();
+    [Parameter] public IReadOnlyList<WorkflowStateView> States { get; set; } = Array.Empty<WorkflowStateView>();
+    /// <summary>Distinct tags currently present on at least one selected issue,
+    /// used to populate the Remove-tag dropdown without surprising the user
+    /// with values that won't apply anywhere.</summary>
+    [Parameter] public IReadOnlyList<string> ExistingTags { get; set; } = Array.Empty<string>();
+    /// <summary>Lookup for human-readable IssueId → "KEY-N" labels used in the
+    /// rejected list. Optional.</summary>
+    [Parameter] public IReadOnlyDictionary<Guid, string> IssueKeysById { get; set; } = new Dictionary<Guid, string>();
+
+    private Guid? _assigneeId;
+    private Guid? _sprintId;
+    private string _tag = "";
+    private Guid _targetStateId;
+    private bool _notify;
+    private bool _busy;
+    private string? _status;
+    private Severity _statusSeverity = Severity.Success;
+    private List<BulkTransitionFailure> _failed = new();
+
+    private string TitleText() => Mode switch
+    {
+        BulkMode.Assign => "Bulk assign",
+        BulkMode.Sprint => "Bulk move to sprint",
+        BulkMode.AddTag => "Bulk add tag",
+        BulkMode.RemoveTag => "Bulk remove tag",
+        BulkMode.Transition => "Bulk transition",
+        _ => "Bulk action",
+    };
+
+    private string TitleIcon() => Mode switch
+    {
+        BulkMode.Assign => Icons.Material.Filled.AssignmentInd,
+        BulkMode.Sprint => Icons.Material.Filled.Loop,
+        BulkMode.AddTag => Icons.Material.Filled.Sell,
+        BulkMode.RemoveTag => Icons.Material.Filled.LayersClear,
+        BulkMode.Transition => Icons.Material.Filled.SwapHoriz,
+        _ => Icons.Material.Filled.PlayArrow,
+    };
+
+    private bool CanApply() => Mode switch
+    {
+        BulkMode.Assign => true,
+        BulkMode.Sprint => true,
+        BulkMode.AddTag => !string.IsNullOrWhiteSpace(_tag),
+        BulkMode.RemoveTag => !string.IsNullOrWhiteSpace(_tag) && ExistingTags.Count > 0,
+        BulkMode.Transition => _targetStateId != Guid.Empty,
+        _ => false,
+    };
+
+    private string UserName(Guid? id) =>
+        id is null ? "(Unassigned)" : (Users.FirstOrDefault(u => u.Id == id)?.DisplayName ?? "?");
+
+    private string SprintName(Guid? id) =>
+        id is null ? "(Backlog)" : (Sprints.FirstOrDefault(s => s.Id == id)?.Name ?? "?");
+
+    private string IssueLabel(Guid id)
+        => IssueKeysById.TryGetValue(id, out var k) ? k : id.ToString()[..8];
+
+    private async Task ApplyAsync()
+    {
+        _status = null;
+        _failed = new();
+        _busy = true;
+        try
+        {
+            switch (Mode)
+            {
+                case BulkMode.Assign:
+                    {
+                        var n = await Bulk.BulkAssignAsync(ProjectId, IssueIds, _assigneeId, ActorId, _notify, default);
+                        Done(n);
+                        break;
+                    }
+                case BulkMode.Sprint:
+                    {
+                        var n = await Bulk.BulkAssignToSprintAsync(ProjectId, IssueIds, _sprintId, ActorId, _notify, default);
+                        Done(n);
+                        break;
+                    }
+                case BulkMode.AddTag:
+                    {
+                        var n = await Bulk.BulkAddTagAsync(ProjectId, IssueIds, _tag, ActorId, default);
+                        Done(n);
+                        break;
+                    }
+                case BulkMode.RemoveTag:
+                    {
+                        var n = await Bulk.BulkRemoveTagAsync(ProjectId, IssueIds, _tag, ActorId, default);
+                        Done(n);
+                        break;
+                    }
+                case BulkMode.Transition:
+                    {
+                        var result = await Bulk.BulkTransitionAsync(ProjectId, IssueIds, _targetStateId, ActorId, _notify, default);
+                        _failed = result.Failed.ToList();
+                        if (result.Failed.Count == 0)
+                        {
+                            Done(result.Succeeded);
+                        }
+                        else
+                        {
+                            _statusSeverity = result.Succeeded > 0 ? Severity.Warning : Severity.Error;
+                            _status = $"Transitioned {result.Succeeded} issue(s); {result.Failed.Count} rejected by the workflow.";
+                        }
+                        break;
+                    }
+            }
+        }
+        catch (Exception ex)
+        {
+            _status = $"Bulk action failed: {ex.Message}";
+            _statusSeverity = Severity.Error;
+        }
+        finally { _busy = false; }
+    }
+
+    private void Done(int touched)
+    {
+        // Close-with-Ok carries the touched count so the page can toast it.
+        MudDialog.Close(DialogResult.Ok(touched));
+    }
+
+    private void Cancel()
+    {
+        // If we already touched some issues but partial failures kept the
+        // dialog open, treat a Cancel as Ok so the page still refreshes.
+        if (_failed.Count > 0) MudDialog.Close(DialogResult.Ok(0));
+        else MudDialog.Cancel();
+    }
+}

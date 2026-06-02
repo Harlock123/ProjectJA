@@ -21,6 +21,7 @@ public static class IssuesModule
         services.AddScoped<IIssueImportService, IssueImportService>();
         services.AddScoped<ITagManagementService, TagManagementService>();
         services.AddScoped<IBurndownQueries, BurndownQueries>();
+        services.AddScoped<IBulkIssueOps, BulkIssueOps>();
         return services;
     }
 
