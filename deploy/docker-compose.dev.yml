@@ -1,0 +1,98 @@
+# Local development dependencies — Postgres + MinIO with attachments-ready
+# bucket and browser CORS. Devs run the .NET app outside Docker via Rider or
+# `dotnet run`, pointing it at these services on localhost.
+#
+# UPGRADING from the standalone `docker run` Postgres in STARTUP.md:
+#   1) docker stop projectja-pg && docker rm projectja-pg
+#   2) docker compose -f deploy/docker-compose.dev.yml up -d
+#   The pgdata volume below is named `projectja-pgdata` to match what the
+#   standalone setup created, so all your existing data carries over.
+#
+# Usage (fresh or after the upgrade above):
+#   docker compose -f deploy/docker-compose.dev.yml up -d
+#
+# Then either drop the Storage:* keys into appsettings.Development.json (see
+# README) or export them as env vars before launching the app:
+#
+#   export Storage__Endpoint=http://localhost:9000
+#   export Storage__Bucket=projectja-attachments
+#   export Storage__AccessKey=minioadmin
+#   export Storage__SecretKey=minioadmin
+#   export Storage__ForcePathStyle=true
+#   export Storage__Region=us-east-1
+#   dotnet run --project src/ProjectJA.Host
+#
+# Tear down (keeps the named volumes — your DB + uploaded files survive):
+#   docker compose -f deploy/docker-compose.dev.yml down
+#
+# Nuke everything including data:
+#   docker compose -f deploy/docker-compose.dev.yml down -v
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: projectja-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: projectja
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: projectja-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      # Allow any browser origin to PUT pre-signed uploads. Fine for dev; on
+      # prod, scope this down to your real host(s).
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console (http://localhost:9001, minioadmin/minioadmin)
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      # /minio/health/live is the canonical liveness endpoint.
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot bootstrap: create the bucket the app expects and make it
+  # downloadable (the API returns pre-signed GET URLs but anonymous-download
+  # makes the browser-side flow simpler if you want to test direct links).
+  # Exits 0 when done; compose treats that as success.
+  minio-init:
+    image: minio/mc:latest
+    container_name: projectja-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        (mc mb --ignore-existing local/projectja-attachments) &&
+        mc anonymous set download local/projectja-attachments &&
+        echo 'bucket projectja-attachments ready';
+      "
+
+volumes:
+  # Reuse the existing standalone volume name so anyone upgrading from the
+  # old `docker run -v projectja-pgdata:...` setup in STARTUP.md keeps every
+  # row of their existing DB. Created on first use if it doesn't exist.
+  pgdata:
+    name: projectja-pgdata
+  miniodata:
+    name: projectja-miniodata
