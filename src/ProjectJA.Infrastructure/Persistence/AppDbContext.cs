@@ -32,6 +32,7 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRo
     public DbSet<Issue> Issues => Set<Issue>();
     public DbSet<IssueLink> IssueLinks => Set<IssueLink>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
+    public DbSet<SavedIssueFilter> SavedIssueFilters => Set<SavedIssueFilter>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<EmailOutboxEntry> EmailOutbox => Set<EmailOutboxEntry>();
@@ -50,6 +51,7 @@ public sealed class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRo
         modelBuilder.ApplyConfiguration(new IssueConfiguration());
         modelBuilder.ApplyConfiguration(new IssueLinkConfiguration());
         modelBuilder.ApplyConfiguration(new AttachmentConfiguration());
+        modelBuilder.ApplyConfiguration(new SavedIssueFilterConfiguration());
         modelBuilder.ApplyConfiguration(new AuditEventConfiguration());
         modelBuilder.ApplyConfiguration(new NotificationConfiguration());
         modelBuilder.ApplyConfiguration(new EmailOutboxEntryConfiguration());

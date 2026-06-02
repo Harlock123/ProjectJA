@@ -12,12 +12,14 @@ public sealed record IssueExportFilter(
     Guid? WorkflowStateId,
     IssuePriority? Priority,
     Guid? AssigneeId,
-    string? TitleContains)
+    string? TitleContains,
+    IReadOnlyList<string>? Tags = null)
 {
     public bool IsActive =>
         Type is not null
         || WorkflowStateId is not null
         || Priority is not null
         || AssigneeId is not null
-        || !string.IsNullOrWhiteSpace(TitleContains);
+        || !string.IsNullOrWhiteSpace(TitleContains)
+        || (Tags is { Count: > 0 });
 }

@@ -483,8 +483,8 @@ else
         try
         {
             tracked.SetSchedule(
-                _edit.StartDate is { } sd ? new DateTimeOffset(sd, TimeSpan.Zero) : null,
-                _edit.EndDate is { } ed ? new DateTimeOffset(ed, TimeSpan.Zero) : null,
+                _edit.StartDate is { } sd ? new DateTimeOffset(DateTime.SpecifyKind(sd, DateTimeKind.Unspecified), TimeSpan.Zero) : null,
+                _edit.EndDate is { } ed ? new DateTimeOffset(DateTime.SpecifyKind(ed, DateTimeKind.Unspecified), TimeSpan.Zero) : null,
                 Clock.UtcNow);
             tracked.SetPercentComplete(Math.Clamp(_edit.PercentComplete, 0, 100), Clock.UtcNow);
         }

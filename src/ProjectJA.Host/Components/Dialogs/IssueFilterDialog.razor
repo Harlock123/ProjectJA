@@ -50,6 +50,37 @@
             <MudTextField Label="Title contains" @bind-Value="_draft.TitleContains"
                           Variant="Variant.Outlined" Clearable="true"
                           HelperText="Case-insensitive substring match." />
+            @if (Tags.Count > 0)
+            {
+                @* AND semantics — an issue passes only when it carries every
+                   selected tag. MultiSelectionTextFunc keeps the closed-state
+                   summary compact when the user picks several. *@
+                <MudSelect T="string" Label="Tags" MultiSelection="true"
+                           SelectedValues="_selectedTags"
+                           SelectedValuesChanged="OnTagsChanged"
+                           MultiSelectionTextFunc="@(s => s.Count == 0 ? "" : (s.Count == 1 ? s.First() : $"{s.Count} tags"))"
+                           Variant="Variant.Outlined" Dense="true" Clearable="true"
+                           HelperText="Issue must carry every selected tag.">
+                    @foreach (var t in Tags)
+                    {
+                        <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                    }
+                </MudSelect>
+            }
+            <MudDivider />
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                <MudTextField @bind-Value="_saveAsName" Label="Save current filter as…"
+                              Variant="Variant.Outlined" Margin="Margin.Dense"
+                              MaxLength="80" Immediate="true"
+                              Placeholder="e.g. My open spikes" />
+                <MudButton OnClick="SaveAsAsync" Variant="Variant.Outlined" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Save"
+                           Disabled="@(_savingDisabled || string.IsNullOrWhiteSpace(_saveAsName))">Save</MudButton>
+            </MudStack>
+            @if (_saveStatus is not null)
+            {
+                <MudAlert Severity="@_saveSeverity" Dense="true">@_saveStatus</MudAlert>
+            }
         </MudStack>
     </DialogContent>
     <DialogActions>
@@ -68,12 +99,50 @@
     [Parameter] public IssueFilter Current { get; set; } = new();
     [Parameter] public IReadOnlyList<WorkflowStateView> States { get; set; } = Array.Empty<WorkflowStateView>();
     [Parameter] public IReadOnlyList<UserSummary> Users { get; set; } = Array.Empty<UserSummary>();
+    /// <summary>Distinct tags currently used in the project. Pulled by the
+    /// caller via <c>ITagManagementService.ListForProjectAsync</c> so the
+    /// dialog stays presentation-only.</summary>
+    [Parameter] public IReadOnlyList<string> Tags { get; set; } = Array.Empty<string>();
+    /// <summary>Invoked when the user clicks "Save". Receives a copy of the
+    /// in-progress draft so the caller can serialise + persist it. Optional —
+    /// when unset the Save button is disabled.</summary>
+    [Parameter] public EventCallback<(string Name, IssueFilter Filter)> OnSaveAs { get; set; }
 
     private IssueFilter _draft = new();
+    private IReadOnlyCollection<string> _selectedTags = Array.Empty<string>();
+    private string _saveAsName = "";
+    private string? _saveStatus;
+    private Severity _saveSeverity = Severity.Success;
+    private bool _savingDisabled => !OnSaveAs.HasDelegate;
 
     protected override void OnInitialized()
     {
         _draft = Current.Clone();
+        _selectedTags = _draft.Tags.ToList();
+    }
+
+    private void OnTagsChanged(IEnumerable<string> values)
+    {
+        _selectedTags = values.ToList();
+        _draft.Tags = _selectedTags.ToList();
+    }
+
+    private async Task SaveAsAsync()
+    {
+        if (_savingDisabled || string.IsNullOrWhiteSpace(_saveAsName)) return;
+        _saveStatus = null;
+        try
+        {
+            await OnSaveAs.InvokeAsync((_saveAsName.Trim(), _draft.Clone()));
+            _saveStatus = $"Saved as '{_saveAsName.Trim()}'.";
+            _saveSeverity = Severity.Success;
+            _saveAsName = "";
+        }
+        catch (Exception ex)
+        {
+            _saveStatus = $"Save failed: {ex.Message}";
+            _saveSeverity = Severity.Error;
+        }
     }
 
     private string StateName(Guid? id) =>
@@ -98,13 +167,17 @@
         // Guid.Empty is the "(Unassigned)" sentinel; any other Guid is a specific user.
         public Guid? AssigneeId { get; set; }
         public string? TitleContains { get; set; }
+        // AND semantics: an issue matches only when its Labels carry EVERY
+        // string in this list (case-insensitive). Empty list = no tag filter.
+        public List<string> Tags { get; set; } = new();
 
         public bool IsActive =>
             Type is not null
             || WorkflowStateId is not null
             || Priority is not null
             || AssigneeId is not null
-            || !string.IsNullOrWhiteSpace(TitleContains);
+            || !string.IsNullOrWhiteSpace(TitleContains)
+            || (Tags is { Count: > 0 });
 
         public IssueFilter Clone() => new()
         {
@@ -113,6 +186,7 @@
             Priority = Priority,
             AssigneeId = AssigneeId,
             TitleContains = TitleContains,
+            Tags = Tags?.ToList() ?? new(),
         };
     }
 }

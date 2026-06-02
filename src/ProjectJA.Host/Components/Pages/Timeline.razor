@@ -84,6 +84,10 @@ else
             {
                 <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">Title: "@_filter.TitleContains"</MudChip>
             }
+            @foreach (var tag in _filter.Tags)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">Tag: @tag</MudChip>
+            }
         </MudStack>
     }
 
@@ -303,6 +307,9 @@ else
         if (!string.IsNullOrWhiteSpace(_filter.TitleContains)
             && (i.Title ?? "").IndexOf(_filter.TitleContains!, StringComparison.OrdinalIgnoreCase) < 0)
             return false;
+        if (_filter.Tags is { Count: > 0 } tags
+            && !tags.All(t => i.Labels.Any(l => string.Equals(l, t, StringComparison.OrdinalIgnoreCase))))
+            return false;
         return true;
     }
 
@@ -344,11 +351,17 @@ else
 
     private async Task OpenFilterAsync()
     {
+        var availableTags = _issues
+            .SelectMany(i => i.Labels)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         var parameters = new DialogParameters<IssueFilterDialog>
         {
             { x => x.Current, _filter },
             { x => x.States, _workflow?.States ?? Array.Empty<WorkflowStateView>() },
             { x => x.Users, _userList },
+            { x => x.Tags, availableTags },
         };
         var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
         var dialog = await DialogService.ShowAsync<IssueFilterDialog>("Filter issues", parameters, options);

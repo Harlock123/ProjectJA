@@ -45,6 +45,18 @@ internal sealed class IssueExportService(
                 // on Postgres; mirrors the in-page filter's OrdinalIgnoreCase.
                 query = query.Where(i => EF.Functions.ILike(i.Title, $"%{needle}%"));
             }
+            if (filter.Tags is { Count: > 0 } tagList)
+            {
+                // AND across selected tags — Postgres text[] containment via
+                // Contains. Case sensitivity matches the UI filter (which is
+                // also case-sensitive on stored values; SetLabels canonicalises
+                // first-casing-wins, so a project carries one casing per tag).
+                foreach (var tag in tagList)
+                {
+                    var captured = tag;
+                    query = query.Where(i => i.Labels.Contains(captured));
+                }
+            }
         }
 
         var issues = await query.OrderBy(i => i.Number).ToListAsync(ct);

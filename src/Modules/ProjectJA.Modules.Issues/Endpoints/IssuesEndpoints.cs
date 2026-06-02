@@ -615,6 +615,7 @@ internal static class IssuesEndpoints
             [FromQuery] IssuePriority? priority,
             [FromQuery] Guid? assigneeId,
             [FromQuery] string? title,
+            [FromQuery(Name = "tag")] string[]? tag,
             [FromServices] IIssueExportService export,
             [FromServices] IProjectQueries projects,
             HttpContext http,
@@ -622,7 +623,8 @@ internal static class IssuesEndpoints
         {
             var auth = await ProjectAccess.RequireAsync(http, projects, projectId, ProjectRole.Viewer, ct);
             if (auth.Denied) return auth.Failure!;
-            var filter = new IssueExportFilter(type, status, priority, assigneeId, title);
+            var tags = tag?.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim()).ToList();
+            var filter = new IssueExportFilter(type, status, priority, assigneeId, title, tags);
             var bytes = await export.ExportProjectAsync(projectId, filter.IsActive ? filter : null, ct);
             if (bytes is null) return Results.NotFound();
             var summary = await projects.GetSummaryAsync(projectId, ct);
