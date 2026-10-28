@@ -46,9 +46,10 @@ dotnet build
 dotnet run --project src/ProjectJA.Host
 ```
 
-For an on-prem-style local stack:
+For an on-prem-style local stack, set the secrets the compose file requires first (`SMTP_HOST`,
+`SMTP_PORT` and `EMAIL_FROM` are optional):
 ```sh
-cp .env.example .env   # fill in secrets
+export POSTGRES_PASSWORD=... MINIO_ROOT_USER=... MINIO_ROOT_PASSWORD=...
 docker compose -f deploy/docker-compose.onprem.yml up --build
 ```
 

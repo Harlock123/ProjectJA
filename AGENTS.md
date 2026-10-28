@@ -69,7 +69,6 @@ dotnet run --project tools/Migrator                     # apply migrations to ev
   connection string of the current `ITenantContext`. The tenant is set by `TenantResolutionMiddleware` (subdomain
   when `Tenancy:Mode` is `SaaS`, the seeded default on-prem) and by `TenantCircuitHandler` for Blazor circuits.
   Code outside a request (jobs, tools, bootstrap) must set it with `IServiceProvider.UseTenant(...)`.
-  `CONTRIBUTING.md` still mentions a `TenantId` filter on `AppDbContext`; there is none.
 - **Schema changes go through migrations.** Add the entity's `DbSet` and `ApplyConfiguration` call in
   `AppDbContext`, then add a migration with the command above. The design-time factories exist so `dotnet ef` works
   without a resolved tenant. The app migrates its own database at start-up; `tools/Migrator` does the rest.

@@ -36,7 +36,7 @@ jobs:
         run: dotnet test tests/ProjectJA.ArchitectureTests --configuration Release --no-build --logger "trx;LogFileName=arch.trx"
 
       # Integration tests need a Docker daemon. GitHub-hosted ubuntu runners have one,
-      # but the tests are slower so we keep them gated on a manual workflow_dispatch.
+      # but the tests are slower so we run them only on pushes to main, not on pull requests.
       - name: Integration tests
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: dotnet test tests/ProjectJA.IntegrationTests --configuration Release --no-build --logger "trx;LogFileName=integration.trx"

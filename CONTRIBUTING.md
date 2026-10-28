@@ -9,7 +9,7 @@ ProjectJA is distributed under the Business Source License 1.1 (see `LICENSE`). 
 ## Development setup
 
 Prerequisites:
-- .NET 9 SDK (pinned in `global.json`)
+- .NET 10 SDK (pinned in `global.json`)
 - Docker + docker-compose (for the integration tests and local stack)
 - A POSIX shell (for the scripts in `tools/` and `deploy/`)
 
@@ -26,7 +26,7 @@ docker compose -f deploy/docker-compose.onprem.yml up --build
 - Nullable reference types are enabled solution-wide.
 - Prefer file-scoped namespaces and minimal `using` blocks.
 - Modules talk to each other only through their `Contracts/` folder — never reach into another module's `Domain/`, `Application/`, or `Persistence/`. Architecture tests enforce this.
-- Every aggregate root carries a `TenantId`. The `AppDbContext` applies a tenant filter; do not bypass it.
+- Each tenant has its own database. `AppDbContext` is created per scope with the current `ITenantContext`'s connection string; code outside a request (jobs, tools, bootstrap) must set the tenant with `IServiceProvider.UseTenant(...)`.
 
 ## Reporting issues
 
